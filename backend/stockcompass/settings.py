@@ -38,7 +38,8 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'stockdata',
-    'rest_framework',
+    'newsdata',
+    'rest_framework'
 ]
 
 MIDDLEWARE = [
@@ -131,7 +132,7 @@ STOCK_DATA_SOURCE = "YF"
 
 NEWS_API_KEYS = os.getenv("NEWS_API_KEYS", "demo").split(",")
 NEWS_API_BASE_URL = os.getenv("NEWS_API_BASE_URL",)
-
+NEWS_DATA_SOURCE = "ALPHA"
 
 # session
 SESSION_ID = 'DEFAULT_SESSION'
