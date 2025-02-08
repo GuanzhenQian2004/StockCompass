@@ -11,7 +11,8 @@ https://docs.djangoproject.com/en/5.1/ref/settings/
 """
 
 from pathlib import Path
-
+import os
+from dotenv import load_dotenv
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -37,6 +38,8 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'stockdata',
+    'rest_framework'
 ]
 
 MIDDLEWARE = [
@@ -122,11 +125,14 @@ STATIC_URL = 'static/'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-STOCK_API_KEYS = ["demo",]
-STOCK_API_BASE_URL = ["https://www.alphavantage.co/"]
-STOCK_API_PERIOD = "1y"
+STOCK_API_KEYS = os.getenv("STOCK_API_KEYS", "default_key").split(",")
+STOCK_API_BASE_URL = os.getenv("STOCK_API_BASE_URL", )
+STOCK_API_PERIOD = os.getenv("STOCK_API_PERIOD", "1y")
+STOCK_DATA_SOURCE = "YF"
+
+NEWS_API_KEYS = os.getenv("NEWS_API_KEYS", "demo").split(",")
+NEWS_API_BASE_URL = os.getenv("NEWS_API_BASE_URL",)
 
 
-NEWS_API_KEYS = ["demo",]
-NEWS_API_BASE_URL = ["https://www.alphavantage.co/"]
-
+# session
+SESSION_ID = 'DEFAULT_SESSION'
