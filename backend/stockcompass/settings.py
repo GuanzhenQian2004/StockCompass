@@ -121,3 +121,12 @@ STATIC_URL = 'static/'
 # https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+STOCK_API_KEYS = ["demo",]
+STOCK_API_BASE_URL = ["https://www.alphavantage.co/"]
+STOCK_API_PERIOD = "1y"
+
+
+NEWS_API_KEYS = ["demo",]
+NEWS_API_BASE_URL = ["https://www.alphavantage.co/"]
+
