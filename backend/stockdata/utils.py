@@ -23,7 +23,6 @@ def fetch_price_yf(ticker_symbol="AAPL", period="1d", interval="60m"):
     
     # Fetch historical data as a pandas DataFrame
     data = ticker.history(period=period, interval=interval)
-    print(data.head())
     # Iterate over each row in the DataFrame and store it
 
     for timestamp, row in data.iterrows():
