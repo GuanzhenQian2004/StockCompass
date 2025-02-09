@@ -1,11 +1,11 @@
 from asgiref.sync import async_to_sync, sync_to_async
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
-from .utils import fetch_price_yf
+from .utils import *
 from .models import StockData
 from .serializers import StockDataSerializer
 from datetime import datetime
-from .utils import unusual_ranges
+
 
 @api_view(['GET'])
 def stock_data_api(request):
@@ -106,6 +106,37 @@ def unusual_ranges_api(request):
             "status_code": 200,
             "unusual_ranges": ranges
         })
+    except Exception as e:
+        return Response({
+            "status_code": 500,
+            "error": str(e)
+        }, status=500)
+@api_view(["GET"])
+def stock_metadata_api(request):
+    """
+    API endpoint to fetch stock metadata.
+
+    Query Parameters:
+      - stockname (optional): The stock ticker symbol (default "AAPL").
+
+    Returns:
+      JSON response containing:
+        - currency
+        - exchangeName
+        - longName
+        - lastClose
+    """
+    # Get the ticker symbol from query parameters (default to AAPL)
+    ticker_symbol = request.query_params.get("stockname", "AAPL")
+    
+    try:
+        # Wrap the async function to run synchronously.
+        data = async_to_sync(get_stock_metadata_info)(ticker_symbol)
+        response_data = {
+            "status_code": 200,
+            "metadata": data
+        }
+        return Response(response_data, status=200)
     except Exception as e:
         return Response({
             "status_code": 500,

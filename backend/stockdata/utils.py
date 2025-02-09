@@ -259,3 +259,59 @@ async def unusual_ranges(data):
         adjusted_ranges.append((str(start_date.astype('M8[D]')), str(end_date.astype('M8[D]'))))
     
     return adjusted_ranges
+
+async def get_stock_metadata_info(ticker_symbol="AAPL"):
+    """
+    Asynchronously fetch stock metadata using yfinance and extract:
+      - currency
+      - exchangeName
+      - longName
+      - last close price (using 'previousClose')
+    
+    Parameters:
+        ticker_symbol (str): The stock ticker symbol (default "AAPL").
+    
+    Returns:
+        dict: A dictionary with the extracted information.
+    """
+    # Create the Ticker object.
+    ticker = yf.Ticker(ticker_symbol)
+    
+    # Run the synchronous call in a separate thread.
+    metadata = await asyncio.to_thread(ticker.get_history_metadata)
+    
+    # Navigate the nested metadata structure.
+    # Typically the useful info is nested inside the 'chart' key.
+    currency = metadata["currency"]
+    exchangeName = metadata["fullExchangeName"]
+    longName = metadata["longName"]
+    hist = ticker.history(period="1d")
+    lastClose = hist.index[-1].date()  
+    # Calculate monthly percentage change:
+    # Retrieve approximately 35 days of data to cover "30 days ago".
+    hist_month = await asyncio.to_thread(ticker.history, period="35d")
+    if not hist_month.empty:
+        price_today_month = hist_month["Close"].iloc[-1]
+        price_30_days_ago = hist_month["Close"].iloc[0]
+        monthly_pct_change = (price_today_month / price_30_days_ago) - 1
+    else:
+        monthly_pct_change = None
+
+    # Calculate annual percentage change:
+    # Retrieve approximately 400 days of data to cover "365 days ago".
+    hist_year = await asyncio.to_thread(ticker.history, period="400d")
+    if not hist_year.empty:
+        price_today_year = hist_year["Close"].iloc[-1]
+        price_365_days_ago = hist_year["Close"].iloc[0]
+        yearly_pct_change = (price_today_year / price_365_days_ago) - 1
+    else:
+        yearly_pct_change = None
+
+    return {
+        "currency": currency,
+        "exchangeName": exchangeName,
+        "longName": longName,
+        "lastClose": lastClose,
+        "montly_pct_change": monthly_pct_change,
+        "yearly_pct_change": yearly_pct_change
+    }
