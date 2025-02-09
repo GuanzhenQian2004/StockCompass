@@ -25,20 +25,27 @@ def fetch_price_yf(ticker_symbol="AAPL", period="1d", interval="60m"):
     data = ticker.history(period=period, interval=interval)
     # Iterate over each row in the DataFrame and store it
 
+    print("Stock data fetched from yfinance successfully.")
+
+    stocks_to_create = []
     for timestamp, row in data.iterrows():
         dt = timestamp.to_pydatetime().replace(tzinfo=None)
-
-        StockData.objects.create(
-            timestamp=dt,
-            open_price=row['Open'],
-            high_price=row['High'],
-            low_price=row['Low'],
-            close_price=row['Close'],
-            volume=int(row['Volume']),
-            dividends=row['Dividends'],
-            stock_splits=row['Stock Splits']
+        stocks_to_create.append(
+            StockData(
+                timestamp=dt,
+                open_price=row['Open'],
+                high_price=row['High'],
+                low_price=row['Low'],
+                close_price=row['Close'],
+                volume=int(row['Volume']),
+                dividends=row['Dividends'],
+                stock_splits=row['Stock Splits']
+            )
         )
-    print("Stock data fetched from yfinance and stored successfully.")
+    
+    # Bulk create all entries in a single query
+    StockData.objects.bulk_create(stocks_to_create)
+    print("Data stored successfully.")
 
 
 def fetch_price_av():
