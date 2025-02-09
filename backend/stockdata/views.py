@@ -128,6 +128,7 @@ def stock_metadata_api(request):
     """
     # Get the ticker symbol from query parameters (default to AAPL)
     ticker_symbol = request.query_params.get("stockname", "AAPL")
+    print(ticker_symbol)
     
     try:
         # Wrap the async function to run synchronously.
