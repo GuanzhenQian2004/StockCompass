@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Search, CircleUser, ArrowUpCircle, ArrowDownCircle, Radar } from "lucide-react"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -38,6 +38,25 @@ const newsData = {
 export default function Dashboard() {
   const [selectedInterval, setSelectedInterval] = useState<string | null>(null);
   const [hoveredInterval, setHoveredInterval] = useState<string | null>(null);
+  const [stockMetadata, setStockMetadata] = useState<any>(null);
+  const [ticker, setTicker] = useState<string>("NVDA");
+
+  const fetchMetadata = async (tickerSymbol: string) => {
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "";
+    try {
+      const res = await fetch(`${apiUrl}/api/stock_metadata/?stockname=${tickerSymbol}`);
+      const data = await res.json();
+      if (data.status_code === 200 && data.metadata) {
+        setStockMetadata(data.metadata);
+      }
+    } catch (err) {
+      console.error("Failed to fetch stock metadata", err);
+    }
+  };
+
+  useEffect(() => {
+    fetchMetadata(ticker);
+  }, []);
 
   const intervals = [
     { id: "fe-mar", label: "Fe-Mar", x1: "Feb", x2: "Mar" },
@@ -75,7 +94,17 @@ export default function Dashboard() {
             </div>
             <div className="relative w-[640px]">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input className="pl-10" placeholder="Input Ticker ..." />
+              <Input
+                className="pl-10"
+                placeholder="Input Ticker ..."
+                value={ticker}
+                onChange={(e) => setTicker(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    fetchMetadata(ticker);
+                  }
+                }}
+              />
             </div>
           </div>
           <Button size="icon" variant="secondary" className="rounded-full">
@@ -93,21 +122,37 @@ export default function Dashboard() {
                 <div className="px-7 py-6 flex justify-between items-start border-b">
                   <div className="space-y-1.5">
                     <h2 className="text-2xl font-semibold text-card-foreground">
-                      NVIDIA Corporation (NVDA)
+                      {stockMetadata ? stockMetadata.longName : "Loading..."}
                     </h2>
                     <p className="text-sm font-medium text-muted-foreground">
-                      Nasdaq · USD · Last Closed: 02-07-2025
+                      {stockMetadata ? `${stockMetadata.exchangeName} · ${stockMetadata.currency} · Last Closed: ${stockMetadata.lastClose}` : ""}
                     </p>
                   </div>
                   <div className="flex gap-4">
-                    <div className="bg-green-100 px-6 py-4 rounded flex items-center gap-2">
-                      <ArrowUpCircle className="h-4 w-4" />
-                      <span className="text-sm font-medium">+10.4% MoM</span>
-                    </div>
-                    <div className="bg-red-100 px-6 py-4 rounded flex items-center gap-2">
-                      <ArrowDownCircle className="h-4 w-4" />
-                      <span className="text-sm font-medium">-5.2% YoY</span>
-                    </div>
+                    {stockMetadata && (
+                      <>
+                        <div className={`${stockMetadata.montly_pct_change >= 0 ? "bg-green-100" : "bg-red-100"} px-6 py-4 rounded flex items-center gap-2`}>
+                          {stockMetadata.montly_pct_change >= 0 ? (
+                            <ArrowUpCircle className="h-4 w-4" />
+                          ) : (
+                            <ArrowDownCircle className="h-4 w-4" />
+                          )}
+                          <span className="text-sm font-medium">
+                            {`${stockMetadata.montly_pct_change >= 0 ? '+' : ''}${(stockMetadata.montly_pct_change * 100).toFixed(1)}% MoM`}
+                          </span>
+                        </div>
+                        <div className={`${stockMetadata.yearly_pct_change >= 0 ? "bg-green-100" : "bg-red-100"} px-6 py-4 rounded flex items-center gap-2`}>
+                          {stockMetadata.yearly_pct_change >= 0 ? (
+                            <ArrowUpCircle className="h-4 w-4" />
+                          ) : (
+                            <ArrowDownCircle className="h-4 w-4" />
+                          )}
+                          <span className="text-sm font-medium">
+                            {`${stockMetadata.yearly_pct_change >= 0 ? '+' : ''}${(stockMetadata.yearly_pct_change * 100).toFixed(1)}% YoY`}
+                          </span>
+                        </div>
+                      </>
+                    )}
                   </div>
                 </div>
 
@@ -381,21 +426,37 @@ export default function Dashboard() {
             <div className="px-7 py-6 flex justify-between items-start border-b">
               <div className="space-y-1.5">
                 <h2 className="text-2xl font-semibold text-card-foreground">
-                  NVIDIA Corporation (NVDA)
+                  {stockMetadata ? stockMetadata.longName : "Loading..."}
                 </h2>
                 <p className="text-sm font-medium text-muted-foreground">
-                  Nasdaq · USD · Last Closed: 02-07-2025
+                  {stockMetadata ? `${stockMetadata.exchangeName} · ${stockMetadata.currency} · Last Closed: ${stockMetadata.lastClose}` : ""}
                 </p>
               </div>
               <div className="flex gap-4">
-                <div className="bg-green-100 px-6 py-4 rounded flex items-center gap-2">
-                  <ArrowUpCircle className="h-4 w-4" />
-                  <span className="text-sm font-medium">+10.4% MoM</span>
-                </div>
-                <div className="bg-red-100 px-6 py-4 rounded flex items-center gap-2">
-                  <ArrowDownCircle className="h-4 w-4" />
-                  <span className="text-sm font-medium">-5.2% YoY</span>
-                </div>
+                {stockMetadata && (
+                  <>
+                    <div className={`${stockMetadata.montly_pct_change >= 0 ? "bg-green-100" : "bg-red-100"} px-6 py-4 rounded flex items-center gap-2`}>
+                      {stockMetadata.montly_pct_change >= 0 ? (
+                        <ArrowUpCircle className="h-4 w-4" />
+                      ) : (
+                        <ArrowDownCircle className="h-4 w-4" />
+                      )}
+                      <span className="text-sm font-medium">
+                        {`${stockMetadata.montly_pct_change >= 0 ? '+' : ''}${(stockMetadata.montly_pct_change * 100).toFixed(1)}% MoM`}
+                      </span>
+                    </div>
+                    <div className={`${stockMetadata.yearly_pct_change >= 0 ? "bg-green-100" : "bg-red-100"} px-6 py-4 rounded flex items-center gap-2`}>
+                      {stockMetadata.yearly_pct_change >= 0 ? (
+                        <ArrowUpCircle className="h-4 w-4" />
+                      ) : (
+                        <ArrowDownCircle className="h-4 w-4" />
+                      )}
+                      <span className="text-sm font-medium">
+                        {`${stockMetadata.yearly_pct_change >= 0 ? '+' : ''}${(stockMetadata.yearly_pct_change * 100).toFixed(1)}% YoY`}
+                      </span>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
 
