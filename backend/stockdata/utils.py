@@ -21,7 +21,7 @@ async def fetch_price_yf(ticker_symbol="AAPL", period="1d", interval="60m"):
       - PE Ratio computed as Close / EPS (if EPS is None or 0, then PE is 0)
       
     For each historical data row, the free cash flow, EPS, and profit margin values are determined by
-    matching the row’s year with the respective annual data. If a year is not found, EPS and profit margin
+    matching the row's year with the respective annual data. If a year is not found, EPS and profit margin
     default to None while free cash flow defaults to 0.
     
     A percentage change column (pct_change) is also computed for the close price.
@@ -42,7 +42,7 @@ async def fetch_price_yf(ticker_symbol="AAPL", period="1d", interval="60m"):
     data = await asyncio.to_thread(ticker.history, period=period, interval=interval)
     
     # Compute percentage change for the Close price.
-    data['pct_change'] = data['Close'].pct_change(periods=-1).fillna(0) * 100
+    data['pct_change'] = data['Close'].pct_change().fillna(0) * 100
 
     ##############################################################
     # Retrieve and merge yearly Free Cash Flow from cash flow data #

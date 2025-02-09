@@ -53,6 +53,22 @@ export default function Dashboard() {
   // NEW: State for slider value. Default 100 means slider is all the way to the right.
   const [sliderValue, setSliderValue] = useState<number>(100);
 
+  // NEW: Add state and constant for event highlights shading mechanism
+  const [showEventHighlights, setShowEventHighlights] = useState<boolean>(false);
+  const [selectedEvent, setSelectedEvent] = useState<string | null>(null);
+  const [hoveredEvent, setHoveredEvent] = useState<string | null>(null);
+
+  const eventRanges = [
+    { start: "2024-05-06", end: "2024-05-15" },
+    { start: "2024-09-23", end: "2024-10-03" },
+  ];
+
+  // Transform the ranges to include IDs
+  const eventHighlights = eventRanges.map((range, index) => ({
+    id: `event${index + 1}`,
+    ...range
+  }));
+
   // Compute if controls (ToggleGroup and Slider) should be disabled until max data is loaded and interval dates are set.
   const controlsDisabled = isFetchingMaxData || !intervalStartDate || !intervalEndDate;
 
@@ -192,6 +208,20 @@ export default function Dashboard() {
     if (upperSearchValue) {
       setTicker(upperSearchValue);
     }
+  };
+
+  // Add this helper function near your other utility functions
+  const calculatePriceTrend = (data: any[], startDate: string, endDate: string): "up" | "down" | "neutral" => {
+    const periodData = data.filter(
+      point => point.time >= startDate && point.time <= endDate
+    );
+
+    if (periodData.length < 2) return "neutral";
+
+    const startPrice = periodData[0].close_price;
+    const endPrice = periodData[periodData.length - 1].close_price;
+    
+    return endPrice > startPrice ? "up" : "down";
   };
 
   return (
@@ -359,6 +389,81 @@ export default function Dashboard() {
                             </pattern>
                           </defs>
                           <CartesianGrid vertical={false} strokeDasharray="3 3" />
+                          {showEventHighlights && eventHighlights.map((event) => {
+                            const trend = calculatePriceTrend(chartData, event.start, event.end);
+                            
+                            let fillColor: string;
+                            if (selectedEvent === event.id) {
+                              fillColor = trend === "up" 
+                                ? "url(#diagonalPatternGreen)" 
+                                : "url(#diagonalPatternRed)";
+                            } else if (hoveredEvent === event.id) {
+                              fillColor = trend === "up" 
+                                ? "#22c55e"  // Tailwind green-500
+                                : "#ef4444"; // Tailwind red-500
+                            } else {
+                              fillColor = trend === "up" 
+                                ? "#86efac"  // Tailwind green-300
+                                : "#fca5a5"; // Tailwind red-300
+                            }
+
+                            return (
+                              <ReferenceArea
+                                key={event.id}
+                                x1={event.start}
+                                x2={event.end}
+                                fill={fillColor}
+                                fillOpacity={selectedEvent === event.id ? 1 : 0.5}
+                                onClick={() => {
+                                  if (selectedEvent === event.id) {
+                                    setSelectedEvent(null);
+                                  } else {
+                                    setSelectedEvent(event.id);
+                                  }
+                                }}
+                                onMouseEnter={() => setHoveredEvent(event.id)}
+                                onMouseLeave={() => setHoveredEvent(null)}
+                                cursor="pointer"
+                                label={
+                                  hoveredEvent === event.id && selectedEvent !== event.id
+                                    ? ({ viewBox }) => {
+                                        const { x, y, width, height } = viewBox;
+                                        const popupWidth = 100;
+                                        const popupHeight = 30;
+                                        return (
+                                          <g>
+                                            <rect
+                                              x={x + width / 2 - popupWidth / 2}
+                                              y={y + height * 0.1 - popupHeight / 2}
+                                              width={popupWidth}
+                                              height={popupHeight}
+                                              rx={5}
+                                              fill="hsl(var(--background))"
+                                              stroke="hsl(var(--border))"
+                                              strokeWidth={1}
+                                              style={{
+                                                filter: "drop-shadow(0 2px 4px rgb(0 0 0 / 0.1))",
+                                                pointerEvents: "none",
+                                              }}
+                                            />
+                                            <text
+                                              x={x + width / 2}
+                                              y={y + height * 0.1}
+                                              textAnchor="middle"
+                                              dominantBaseline="middle"
+                                              className="text-sm font-medium fill-foreground select-none"
+                                              style={{ pointerEvents: "none" }}
+                                            >
+                                              Investigate
+                                            </text>
+                                          </g>
+                                        );
+                                      }
+                                    : undefined
+                                }
+                              />
+                            );
+                          })}
                           {intervals.map((interval) => {
                             return (() => {
                               // Determine the starting and ending values for the interval.
@@ -522,7 +627,7 @@ export default function Dashboard() {
                           </div>
                         </div>
 
-                        <Button>
+                        <Button onClick={() => setShowEventHighlights(prev => !prev)}>
                           Event Analyzer
                           <Radar className="ml-2 h-4 w-4" />
                         </Button>
@@ -766,6 +871,81 @@ export default function Dashboard() {
                         </pattern>
                       </defs>
                       <CartesianGrid vertical={false} strokeDasharray="3 3" />
+                      {showEventHighlights && eventHighlights.map((event) => {
+                        const trend = calculatePriceTrend(chartData, event.start, event.end);
+                        
+                        let fillColor: string;
+                        if (selectedEvent === event.id) {
+                          fillColor = trend === "up" 
+                            ? "url(#diagonalPatternGreen)" 
+                            : "url(#diagonalPatternRed)";
+                        } else if (hoveredEvent === event.id) {
+                          fillColor = trend === "up" 
+                            ? "#22c55e"  // Tailwind green-500
+                            : "#ef4444"; // Tailwind red-500
+                        } else {
+                          fillColor = trend === "up" 
+                            ? "#86efac"  // Tailwind green-300
+                            : "#fca5a5"; // Tailwind red-300
+                        }
+
+                        return (
+                          <ReferenceArea
+                            key={event.id}
+                            x1={event.start}
+                            x2={event.end}
+                            fill={fillColor}
+                            fillOpacity={selectedEvent === event.id ? 1 : 0.5}
+                            onClick={() => {
+                              if (selectedEvent === event.id) {
+                                setSelectedEvent(null);
+                              } else {
+                                setSelectedEvent(event.id);
+                              }
+                            }}
+                            onMouseEnter={() => setHoveredEvent(event.id)}
+                            onMouseLeave={() => setHoveredEvent(null)}
+                            cursor="pointer"
+                            label={
+                              hoveredEvent === event.id && selectedEvent !== event.id
+                                ? ({ viewBox }) => {
+                                    const { x, y, width, height } = viewBox;
+                                    const popupWidth = 100;
+                                    const popupHeight = 30;
+                                    return (
+                                      <g>
+                                        <rect
+                                          x={x + width / 2 - popupWidth / 2}
+                                          y={y + height * 0.1 - popupHeight / 2}
+                                          width={popupWidth}
+                                          height={popupHeight}
+                                          rx={5}
+                                          fill="hsl(var(--background))"
+                                          stroke="hsl(var(--border))"
+                                          strokeWidth={1}
+                                          style={{
+                                            filter: "drop-shadow(0 2px 4px rgb(0 0 0 / 0.1))",
+                                            pointerEvents: "none",
+                                          }}
+                                        />
+                                        <text
+                                          x={x + width / 2}
+                                          y={y + height * 0.1}
+                                          textAnchor="middle"
+                                          dominantBaseline="middle"
+                                          className="text-sm font-medium fill-foreground select-none"
+                                          style={{ pointerEvents: "none" }}
+                                        >
+                                          Investigate
+                                        </text>
+                                      </g>
+                                    );
+                                  }
+                                : undefined
+                            }
+                          />
+                        );
+                      })}
                       {intervals.map((interval) => {
                         return (() => {
                           // Determine the starting and ending values for the interval.
@@ -929,7 +1109,7 @@ export default function Dashboard() {
                       </div>
                     </div>
 
-                    <Button>
+                    <Button onClick={() => setShowEventHighlights(prev => !prev)}>
                       Event Analyzer
                       <Radar className="ml-2 h-4 w-4" />
                     </Button>
