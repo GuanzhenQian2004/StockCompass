@@ -257,8 +257,12 @@ async def unusual_ranges(data):
                 # Otherwise, if start is the maximum date, shift the range back by one day.
                 start_date = start_date - np.timedelta64(1, 'D')
         adjusted_ranges.append((str(start_date.astype('M8[D]')), str(end_date.astype('M8[D]'))))
+
+    result = []
+    for unusual_range in adjusted_ranges:
+        result.append({"start":unusual_range[0],"end":unusual_range[1]})
     
-    return adjusted_ranges
+    return result
 
 async def get_stock_metadata_info(ticker_symbol="AAPL"):
     """
