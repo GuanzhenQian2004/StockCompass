@@ -4,6 +4,7 @@ import yfinance as yf
 from argparse import ArgumentParser
 import requests
 from pydantic import BaseModel
+from openai import OpenAI
 
 def send_post_request(url, payload, headers):
     response = requests.post(url, json=payload, headers=headers)
@@ -64,6 +65,31 @@ def api_enhancement_request(api_key, stock, start, end, explanations, references
     }
     return send_post_request(url, payload, headers)
 
+def api_enhancement_request_openai(api_key, stock, start, end, explanations, references):
+    client = OpenAI(api_key="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")
+
+    setting =  """ You will be provided with a list of citations to various news sources and a text string describing possible explanations for a drop in stock performance. Your job is to analyze this string and then rethink the provided explanations. Check each of the sites and enhance the explanations by providing additional details and context. Feel free to remove explanations that don't make much sense. YOU WILL BE EXPECTED TO FIND MORE RESOURCES. You will be evaluated on the quality and novelty of your enhancements in that order. Quality is measured by the degree to which your data is supported by the references you present. Novelty is the likelihood that another model would not present this information. Be concise and to the point. If any of the explanations appear weak, ignore them and focus on improving the others. DO NOT MENTIONED UNSUPPORTED HYPOTHETICAL CLAIMS. YOUR OUTPUT MUST BE IN THE JSON FORMAT: {\"explanations\": [\"explanation1\", \"explanation2\"], \"reasons\": [\"reason1\", \"reason2\"], \"references\": [\"reference1\", \"reference2\"], \"text_summary\": \"summary\"}" """
+    
+    query = f"""I have these explanations for the drop in stock performance of {stock} between the dates {start} and {end}.
+        I need you to enhance them by providing additional details and context. Check the provided citations for more information.
+        Be sure to remove any explanations that don't make much sense. Provide a summary of your enhancements, as well as any references you used to make your conclusions. Be sure to include the reasons for the drop in stock performance. DO NOT MENTION MARKET VOLATILITY. YOUR RESPONSE MUST BE IN VALID JSON FORMAT. AND DO NOT COMMENT ON THE PREVIOUS STRING, JUST THE EXPLANATIONS. \\n explanations: {explanations}, \\n references: {references}"""
+    
+    payload = {
+        "model": "gpt-4o",
+        "messages": [{"role": "system", "content": setting}, {"role": "user", "content": query}],
+        "response_format": {"type": 'json_object'},
+    }
+    response=client.chat.completions.create(
+        model='gpt-4o',
+        messages=[
+            {'role':'system', "content":setting},
+            {'role':"user", "content":query}
+        ],
+        stream=False
+    )
+
+    return response
+
 def generate_data(api_key_1, api_key_2, stock, start, end):
     simple_explanations = api_data_request(api_key_1, stock, start, end)
     complex_explanations = api_enhancement_request(api_key_2, stock, start, end, simple_explanations['content'], simple_explanations["citations"])
@@ -72,6 +98,12 @@ def generate_data(api_key_1, api_key_2, stock, start, end):
     if choices and isinstance(choices, list) and choices[0].get('message'):
         return choices[0]['message'].get('content', 'No content available')
     return "No valid complex explanation returned."
+
+def generate_data_openai(api_key_1, api_key_2, stock, start, end):
+    simple_explanations = api_data_request(api_key_1, stock, start, end)
+    complex_explanations = api_enhancement_request(api_key_2, stock, start, end, simple_explanations['content'], simple_explanations["citations"])
+    # Check for choices key in the returned complex explanations
+    return complex_explanations.choices[0].message.content 
 
 if __name__ == "__main__":
     parser = ArgumentParser()
@@ -82,7 +114,7 @@ if __name__ == "__main__":
     parser.add_argument("--end", type=list, required=True, help="list representing end of date range")
 
     args = parser.parse_args()
-    print(generate_data(args.api_key_1,args.api_key_2, args.stock, args.start, args.end))
+    print(generate_data_openai(args.api_key_1,args.api_key_2, args.stock, args.start, args.end))
 
 # Example usage:
 
@@ -93,4 +125,4 @@ if __name__ == "__main__":
 # python Simple_Explanation.py --api_key_1 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 --api_key_2 sk-d7223df849cf4c1d8d97c7178c04e932 --stock AAPL --start "2022-01-01" --end "2022-01-31"
 
 
-# python Simple_Explanation.py --api_key_1 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 --api_key_2 sk-d7223df849cf4c1d8d97c7178c04e932 --stock AAPL --start "2022-01-01" --end "2022-01-31"
+# python message.py --api_key_1 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 --api_key_2 sk-d7223df849cf4c1d8d97c7178c04e932 --stock AAPL --start "2022-01-01" --end "2022-01-31"

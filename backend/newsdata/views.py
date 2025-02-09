@@ -1,6 +1,6 @@
 from django.http import JsonResponse
 from .utils import get_news_data
-from .message import generate_data
+from .message import *
 
 # Removed @require_GET for simplicity. You can add method checks inside the view.
 # async def news_api(request):
@@ -56,13 +56,13 @@ def news_api(request):
 async def async_news_data_api(request):
     try:
         API_KEY_1 = settings.API_PER
-        API_KEY_2 = settings.API_DS
+        API_KEY_2 = settings.API_OPENAI
         stockname = request.query_params.get('stockname', 'AAPL')
         start = request.query_params.get('start','2025-01-01')
         end = request.query_params.get("end",'2025-01-10')
         
         # Generate both simple and complex responses.
-        complex_res = generate_data(API_KEY_1, API_KEY_2, stockname, start, end)
+        complex_res = generate_data_openai(API_KEY_1, API_KEY_2, stockname, start, end)
         
         response_data = {
             "status_code": 200,

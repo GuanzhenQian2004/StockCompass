@@ -9,11 +9,11 @@ def main():
     """Run administrative tasks."""
 
     # This example filters out warnings about naive datetimes.
-    warnings.filterwarnings(
-        "ignore",
-        message=".*naive datetime.*",
-        category=RuntimeWarning
-    )
+    # warnings.filterwarnings(
+    #     "ignore",
+    #     message=".*naive datetime.*",
+    #     category=RuntimeWarning
+    # )
     
     os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'stockcompass.settings')
 
