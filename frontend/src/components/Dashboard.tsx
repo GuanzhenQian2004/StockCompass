@@ -36,14 +36,76 @@ const newsData = {
 };
 
 export default function Dashboard() {
-  const [selectedInterval, setSelectedInterval] = useState<string | null>(null);
+  // Default to 1Y so we fetch 1-year data on preload
+  const [selectedInterval, setSelectedInterval] = useState<string | null>("1Y");
   const [hoveredInterval, setHoveredInterval] = useState<string | null>(null);
   const [stockMetadata, setStockMetadata] = useState<any>(null);
   const [ticker, setTicker] = useState<string>("NVDA");
   const [chartData, setChartData] = useState<any[]>([]);
   const [finData, setFinData] = useState<any[]>([]);
+  const [isFetchingMaxData, setIsFetchingMaxData] = useState<boolean>(true);
+  // New state to preserve the initial 1Y data (baseline) and for interval calculations
+  const [oneYearData, setOneYearData] = useState<any[]>([]);
+  const [intervalEndDate, setIntervalEndDate] = useState<Date | null>(null);
+  const [intervalStartDate, setIntervalStartDate] = useState<Date | null>(null);
+  const [intervalError, setIntervalError] = useState<string>("");
 
-  const fetchMetadata = async (tickerSymbol: string) => {
+  // NEW: State for slider value. Default 100 means slider is all the way to the right.
+  const [sliderValue, setSliderValue] = useState<number>(100);
+
+  // Compute if controls (ToggleGroup and Slider) should be disabled until max data is loaded and interval dates are set.
+  const controlsDisabled = isFetchingMaxData || !intervalStartDate || !intervalEndDate;
+
+  // NEW: Helper function to format dates as MM-DD-YYYY.
+  function formatDate(date: Date): string {
+    const month = (date.getMonth() + 1).toString().padStart(2, "0");
+    const day = date.getDate().toString().padStart(2, "0");
+    const year = date.getFullYear();
+    return `${month}-${day}-${year}`;
+  }
+
+  // NEW: This function fetches data for any ticker: first 1Y, then max, merges, sets state
+  async function fetchTickerData(tickerSymbol: string) {
+    try {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "";
+      // 1) Fetch 1Y data
+      const response1y = await fetch(`${apiUrl}/api/stockdata/?stockname=${tickerSymbol}&period=1y&interval=1d`);
+      const data1y = await response1y.json();
+      if (data1y.status_code === 200 && data1y.time_series) {
+        setChartData(data1y.time_series);
+        setOneYearData(data1y.time_series);
+        if (data1y.fin_data) {
+          setFinData(data1y.fin_data);
+        }
+      }
+      // 2) Fetch max data
+      const responseMax = await fetch(`${apiUrl}/api/stockdata/?stockname=${tickerSymbol}&period=max&interval=1d`);
+      const dataMax = await responseMax.json();
+      if (dataMax.status_code === 200 && dataMax.time_series) {
+        // Combine 1Y with max data
+        const combined = [...(data1y.time_series || []), ...dataMax.time_series];
+        // De-duplicate based on "time"
+        const dedupedData = combined.reduce<any[]>((acc, cur) => {
+          if (!acc.some((item) => item.time === cur.time)) {
+            acc.push(cur);
+          }
+          return acc;
+        }, []);
+        // Sort merged data by time
+        dedupedData.sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
+        setChartData(dedupedData);
+        // Only set isFetchingMaxData to false after both datasets are loaded and merged
+        setIsFetchingMaxData(false);
+      }
+    } catch (error) {
+      console.error(`Failed to fetch data for ${tickerSymbol}:`, error);
+      // In case of error, still set isFetchingMaxData to false to prevent permanent loading state
+      setIsFetchingMaxData(false);
+    }
+  }
+
+  // Keep metadata fetch the same, but call it inside a function for clarity
+  async function fetchMetadata(tickerSymbol: string) {
     const apiUrl = process.env.NEXT_PUBLIC_API_URL || "";
     try {
       const res = await fetch(`${apiUrl}/api/stock_metadata/?stockname=${tickerSymbol}`);
@@ -54,32 +116,83 @@ export default function Dashboard() {
     } catch (err) {
       console.error("Failed to fetch stock metadata", err);
     }
-  };
+  }
 
+  // Unify data fetching in one effect, triggered by `ticker` changes.
   useEffect(() => {
+    // Reset toggle group back to "1Y" and slider to the right (100)
+    setSelectedInterval("1Y");
+    setSliderValue(100);
+    // Reset fetching state to true and clear interval dates
+    setIsFetchingMaxData(true);
+    setIntervalStartDate(null);
+    setIntervalEndDate(null);
+
+    fetchTickerData(ticker);
     fetchMetadata(ticker);
-    async function fetchNVDAData() {
-      try {
-        const apiUrl = process.env.NEXT_PUBLIC_API_URL || "";
-        const response = await fetch(`${apiUrl}/api/stockdata/?stockname=NVDA&period=1y&interval=1d`);
-        const parsedData = await response.json();
-        if (parsedData.status_code === 200 && parsedData.time_series) {
-          setChartData(parsedData.time_series);
-          if (parsedData.fin_data) {
-            setFinData(parsedData.fin_data);
-          }
-        }
-      } catch (error) {
-        console.error("Failed to fetch NVDA 1y data:", error);
+  }, [ticker]);
+
+  // Recalculate the sliding window (intervalStartDate & intervalEndDate) based on the slider value,
+  // selected interval (i.e. window length) and entire available (max period) chartData.
+  useEffect(() => {
+    if (chartData.length > 0) {
+      const firstAvailable = new Date(chartData[0].time);
+      const lastAvailable = new Date(chartData[chartData.length - 1].time);
+
+      let windowDays = 0;
+      if (selectedInterval === "1Y") {
+        windowDays = 365;
+      } else if (selectedInterval === "3Y") {
+        windowDays = 365 * 3;
+      } else if (selectedInterval === "6M") {
+        windowDays = 182;
       }
+      const windowMs = windowDays * 86400000; // milliseconds in a day
+
+      // The minimum possible end date equals firstAvailable + window (i.e. leftmost slider)
+      const minEndTime = firstAvailable.getTime() + windowMs;
+      // The maximum possible end date equals the last available date in the merged dataset.
+      const maxEndTime = lastAvailable.getTime();
+
+      if (maxEndTime < minEndTime) {
+        setIntervalError("Not enough data to display the selected time range.");
+        return;
+      } else {
+        setIntervalError("");
+      }
+
+      // Map the slider value (0 to 100) to a currentEndTime in milliseconds.
+      const currentEndTimeMs = minEndTime + ((sliderValue / 100) * (maxEndTime - minEndTime));
+      const currentEndDate = new Date(currentEndTimeMs);
+      const currentStartDate = new Date(currentEndTimeMs - windowMs);
+
+      setIntervalEndDate(currentEndDate);
+      setIntervalStartDate(currentStartDate);
     }
-    fetchNVDAData();
-  }, []);
+  }, [sliderValue, selectedInterval, chartData]);
 
   const intervals = [
     { id: "fe-mar", label: "Fe-Mar", x1: "Feb", x2: "Mar" },
     { id: "apr-jun", label: "April - June", x1: "Apr", x2: "Jun" }
   ];
+
+  // Add a memoized filtered data set for the chart display
+  const displayChartData = React.useMemo(() => {
+    // Ensure display only shows data between intervalStartDate and intervalEndDate.
+    if (!intervalStartDate || !intervalEndDate) return chartData;
+    return chartData.filter(item => {
+      const t = new Date(item.time);
+      return t >= intervalStartDate && t <= intervalEndDate;
+    });
+  }, [chartData, intervalStartDate, intervalEndDate]);
+
+  // Add this function to handle button click (similar to Enter key press)
+  const handleSearch = (searchValue: string) => {
+    const upperSearchValue = searchValue.toUpperCase();
+    if (upperSearchValue) {
+      setTicker(upperSearchValue);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -100,19 +213,28 @@ export default function Dashboard() {
                 StockCompass
               </span>
             </div>
-            <div className="relative w-[640px]">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <div className="flex items-center gap-3 justify-center w-full max-w-xl mx-auto">
               <Input
-                className="pl-10"
-                placeholder="Input Ticker ..."
-                value={ticker}
-                onChange={(e) => setTicker(e.target.value)}
+                type="text"
+                placeholder="Search stocks..."
+                className="w-[400px]" // Increased width from 250px to 400px
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    fetchMetadata(ticker);
+                  if (e.key === 'Enter') {
+                    handleSearch((e.target as HTMLInputElement).value);
                   }
                 }}
               />
+              <Button 
+                type="submit" 
+                size="icon"
+                onClick={() => {
+                  // Get the input value from the Input component
+                  const inputEl = document.querySelector('input[type="text"]') as HTMLInputElement;
+                  handleSearch(inputEl.value);
+                }}
+              >
+                <Search className="h-4 w-4" />
+              </Button>
             </div>
           </div>
           <Button size="icon" variant="secondary" className="rounded-full">
@@ -172,7 +294,7 @@ export default function Dashboard() {
                     <div className="flex-1 min-h-0">
                       <ResponsiveContainer width="100%" height="100%">
                         <LineChart
-                          data={chartData}
+                          data={displayChartData}
                           margin={{
                             top: 10,
                             right: 10,
@@ -240,8 +362,8 @@ export default function Dashboard() {
                           {intervals.map((interval) => {
                             return (() => {
                               // Determine the starting and ending values for the interval.
-                              const startDatum = chartData.find(d => d.time === interval.x1);
-                              const endDatum = chartData.find(d => d.time === interval.x2);
+                              const startDatum = displayChartData.find(d => d.time === interval.x1);
+                              const endDatum = displayChartData.find(d => d.time === interval.x2);
                               const trendColor = (startDatum && endDatum)
                                 ? (endDatum.close_price - startDatum.close_price >= 0 ? "green" : "red")
                                 : "gray";
@@ -362,19 +484,39 @@ export default function Dashboard() {
                       <div className="flex items-center justify-between px-1">
                         <div className="flex items-center gap-24">
                           <div className="flex-shrink-0">
-                            <ToggleGroup type="single" defaultValue="1Y" aria-label="Select Time Range">
-                              <ToggleGroupItem value="3Y" aria-label="3 Years">3Y</ToggleGroupItem>
-                              <ToggleGroupItem value="1Y" aria-label="1 Year">1Y</ToggleGroupItem>
-                              <ToggleGroupItem value="6M" aria-label="6 Months">6M</ToggleGroupItem>
+                            <ToggleGroup
+                              type="single"
+                              value={selectedInterval ?? ""}
+                              disabled={controlsDisabled}
+                              className={controlsDisabled ? "opacity-50 cursor-not-allowed" : ""}
+                              onValueChange={(value) => { 
+                                // Update the selected interval without resetting the sliderValue.
+                                setSelectedInterval(value);
+                              }}
+                            >
+                              <ToggleGroupItem disabled={controlsDisabled} value="3Y" aria-label="3 Years">3Y</ToggleGroupItem>
+                              <ToggleGroupItem disabled={controlsDisabled} value="1Y" aria-label="1 Year">1Y</ToggleGroupItem>
+                              <ToggleGroupItem disabled={controlsDisabled} value="6M" aria-label="6 Months">6M</ToggleGroupItem>
                             </ToggleGroup>
                           </div>
 
                           <div className="w-[500px] space-y-3.5">
-                            <Slider defaultValue={[70]} max={100} step={1} />
-                            <div className="flex justify-between items-center">
-                              <span className="text-sm font-medium">Date Range</span>
+                            <Slider
+                              disabled={controlsDisabled}
+                              className={controlsDisabled ? "opacity-50 cursor-not-allowed" : ""}
+                              value={[sliderValue]}
+                              onValueChange={(value: number[]) => { 
+                                setSliderValue(value[0]); 
+                              }}
+                            />
+                            <div className={`flex justify-between items-center ${controlsDisabled ? "opacity-50" : ""}`}>
+                              <span className="text-sm font-medium">
+                                Date Range
+                              </span>
                               <span className="text-sm font-medium text-muted-foreground">
-                                05-12-2023 to 05-11-2024
+                                {intervalStartDate && intervalEndDate 
+                                  ? `${formatDate(intervalStartDate)} to ${formatDate(intervalEndDate)}`
+                                  : "Loading..."}
                               </span>
                             </div>
                           </div>
@@ -394,20 +536,25 @@ export default function Dashboard() {
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-medium text-muted-foreground">Prev Close</span>
                       {(() => {
-                        const lastFin = finData[finData.length - 1];
-                        if (!lastFin?.pct_change && lastFin?.pct_change !== 0) {
+                        const lastItem = displayChartData[displayChartData.length - 1];
+                        const prevItem = displayChartData[displayChartData.length - 2];
+                        
+                        if (!lastItem?.close_price || !prevItem?.close_price) {
                           return <span className="text-sm font-medium text-muted-foreground">N/A</span>;
                         }
-                        const sign = lastFin.pct_change > 0 ? "+" : "";
+                        
+                        const pctChange = ((lastItem.close_price - prevItem.close_price) / prevItem.close_price) * 100;
+                        const sign = pctChange > 0 ? "+" : "";
+                        const colorClass = pctChange > 0 ? "text-green-600" : "text-red-600";
                         return (
-                          <span className="text-sm font-medium text-green-600 text-muted-foreground">
-                            {sign}{lastFin.pct_change.toFixed(2)}%
+                          <span className={`text-sm font-medium ${colorClass}`}>
+                            {sign}{pctChange.toFixed(2)}%
                           </span>
                         );
                       })()}
                     </div>
                     {(() => {
-                      const lastItem = chartData[chartData.length - 1];
+                      const lastItem = displayChartData[displayChartData.length - 1];
                       const price = lastItem?.close_price != null
                         ? `$${lastItem.close_price.toFixed(2)}`
                         : <span className="text-3xl font-semibold text-muted-foreground">N/A</span>;
@@ -418,13 +565,14 @@ export default function Dashboard() {
                   <div className="space-y-1">
                     <div className="text-sm font-medium text-muted-foreground">Market Cap</div>
                     {(() => {
-                      const lastFin = finData[finData.length - 1];
-                      if (!lastFin?.market_cap && lastFin?.market_cap !== 0) {
+                      const lastItem = displayChartData[displayChartData.length - 1];
+                      if (!lastItem?.close_price || !lastItem?.volume) {
                         return <div className="text-3xl font-semibold text-muted-foreground">N/A</div>;
                       }
+                      const marketCap = lastItem.close_price * lastItem.volume;
                       return (
                         <div className="text-3xl font-semibold">
-                          {lastFin.market_cap.toLocaleString("en-US", {
+                          {marketCap.toLocaleString("en-US", {
                             style: "currency",
                             currency: "USD",
                             notation: "compact",
@@ -438,7 +586,7 @@ export default function Dashboard() {
                   <div className="space-y-1">
                     <div className="text-sm font-medium text-muted-foreground">Share Volume</div>
                     {(() => {
-                      const lastTime = chartData[chartData.length - 1];
+                      const lastTime = displayChartData[displayChartData.length - 1];
                       if (!lastTime || lastTime.volume == null) {
                         return <div className="text-3xl font-semibold text-muted-foreground">N/A</div>;
                       }
@@ -453,10 +601,19 @@ export default function Dashboard() {
                   <div className="space-y-1">
                     <div className="text-sm font-medium text-muted-foreground">P/E (TTM)</div>
                     {(() => {
-                      const lastFin = finData[finData.length - 1];
-                      if (lastFin?.pe == null) return <div className="text-3xl font-semibold text-muted-foreground">N/A</div>;
+                      const lastItem = displayChartData[displayChartData.length - 1];
+                      // Calculate TTM EPS using the last 4 quarters
+                      const ttmEarnings = displayChartData
+                        .slice(-252) // Approximate trading days in a year
+                        .reduce((sum, item) => sum + (item.earnings || 0), 0);
+                      
+                      if (!lastItem?.close_price || ttmEarnings === 0) {
+                        return <div className="text-3xl font-semibold text-muted-foreground">N/A</div>;
+                      }
+                      
+                      const pe = lastItem.close_price / (ttmEarnings / lastItem.volume);
                       return (
-                        <div className="text-3xl font-semibold">{lastFin.pe.toFixed(2)}</div>
+                        <div className="text-3xl font-semibold">{pe.toFixed(2)}</div>
                       );
                     })()}
                   </div>
@@ -464,13 +621,20 @@ export default function Dashboard() {
                   <div className="space-y-1">
                     <div className="text-sm font-medium text-muted-foreground">EPS (TTM)</div>
                     {(() => {
-                      const lastFin = finData[finData.length - 1];
-                      if (!lastFin || lastFin.eps == null) {
+                      const lastItem = displayChartData[displayChartData.length - 1];
+                      // Calculate TTM EPS
+                      const ttmEarnings = displayChartData
+                        .slice(-252) // Approximate trading days in a year
+                        .reduce((sum, item) => sum + (item.earnings || 0), 0);
+                      
+                      if (!lastItem?.volume || ttmEarnings === 0) {
                         return <div className="text-3xl font-semibold text-muted-foreground">N/A</div>;
                       }
+                      
+                      const eps = ttmEarnings / lastItem.volume;
                       return (
                         <div className="text-3xl font-semibold">
-                          {lastFin.eps.toFixed(2)}
+                          {eps.toFixed(2)}
                         </div>
                       );
                     })()}
@@ -537,7 +701,7 @@ export default function Dashboard() {
                 <div className="flex-1 min-h-0">
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart
-                      data={chartData}
+                      data={displayChartData}
                       margin={{
                         top: 10,
                         right: 10,
@@ -605,8 +769,8 @@ export default function Dashboard() {
                       {intervals.map((interval) => {
                         return (() => {
                           // Determine the starting and ending values for the interval.
-                          const startDatum = chartData.find(d => d.time === interval.x1);
-                          const endDatum = chartData.find(d => d.time === interval.x2);
+                          const startDatum = displayChartData.find(d => d.time === interval.x1);
+                          const endDatum = displayChartData.find(d => d.time === interval.x2);
                           const trendColor = (startDatum && endDatum)
                             ? (endDatum.close_price - startDatum.close_price >= 0 ? "green" : "red")
                             : "gray";
@@ -727,19 +891,39 @@ export default function Dashboard() {
                   <div className="flex items-center justify-between px-1">
                     <div className="flex items-center gap-24">
                       <div className="flex-shrink-0">
-                        <ToggleGroup type="single" defaultValue="1Y" aria-label="Select Time Range">
-                          <ToggleGroupItem value="3Y" aria-label="3 Years">3Y</ToggleGroupItem>
-                          <ToggleGroupItem value="1Y" aria-label="1 Year">1Y</ToggleGroupItem>
-                          <ToggleGroupItem value="6M" aria-label="6 Months">6M</ToggleGroupItem>
+                        <ToggleGroup
+                          type="single"
+                          value={selectedInterval ?? ""}
+                          disabled={controlsDisabled}
+                          className={controlsDisabled ? "opacity-50 cursor-not-allowed" : ""}
+                          onValueChange={(value) => { 
+                            // Update the selected interval without resetting the sliderValue.
+                            setSelectedInterval(value);
+                          }}
+                        >
+                          <ToggleGroupItem disabled={controlsDisabled} value="3Y" aria-label="3 Years">3Y</ToggleGroupItem>
+                          <ToggleGroupItem disabled={controlsDisabled} value="1Y" aria-label="1 Year">1Y</ToggleGroupItem>
+                          <ToggleGroupItem disabled={controlsDisabled} value="6M" aria-label="6 Months">6M</ToggleGroupItem>
                         </ToggleGroup>
                       </div>
 
                       <div className="w-[500px] space-y-3.5">
-                        <Slider defaultValue={[70]} max={100} step={1} />
-                        <div className="flex justify-between items-center">
-                          <span className="text-sm font-medium">Date Range</span>
+                        <Slider
+                          disabled={controlsDisabled}
+                          className={controlsDisabled ? "opacity-50 cursor-not-allowed" : ""}
+                          value={[sliderValue]}
+                          onValueChange={(value: number[]) => { 
+                            setSliderValue(value[0]); 
+                          }}
+                        />
+                        <div className={`flex justify-between items-center ${controlsDisabled ? "opacity-50" : ""}`}>
+                          <span className="text-sm font-medium">
+                            Date Range
+                          </span>
                           <span className="text-sm font-medium text-muted-foreground">
-                            05-12-2023 to 05-11-2024
+                            {intervalStartDate && intervalEndDate 
+                              ? `${formatDate(intervalStartDate)} to ${formatDate(intervalEndDate)}`
+                              : "Loading..."}
                           </span>
                         </div>
                       </div>
@@ -759,20 +943,25 @@ export default function Dashboard() {
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium text-muted-foreground">Prev Close</span>
                   {(() => {
-                    const lastFin = finData[finData.length - 1];
-                    if (!lastFin?.pct_change && lastFin?.pct_change !== 0) {
+                    const lastItem = displayChartData[displayChartData.length - 1];
+                    const prevItem = displayChartData[displayChartData.length - 2];
+                    
+                    if (!lastItem?.close_price || !prevItem?.close_price) {
                       return <span className="text-sm font-medium text-muted-foreground">N/A</span>;
                     }
-                    const sign = lastFin.pct_change > 0 ? "+" : "";
+                    
+                    const pctChange = ((lastItem.close_price - prevItem.close_price) / prevItem.close_price) * 100;
+                    const sign = pctChange > 0 ? "+" : "";
+                    const colorClass = pctChange > 0 ? "text-green-600" : "text-red-600";
                     return (
-                      <span className="text-sm font-medium text-green-600 text-muted-foreground">
-                        {sign}{lastFin.pct_change.toFixed(2)}%
+                      <span className={`text-sm font-medium ${colorClass}`}>
+                        {sign}{pctChange.toFixed(2)}%
                       </span>
                     );
                   })()}
                 </div>
                 {(() => {
-                  const lastItem = chartData[chartData.length - 1];
+                  const lastItem = displayChartData[displayChartData.length - 1];
                   const price = lastItem?.close_price != null
                     ? `$${lastItem.close_price.toFixed(2)}`
                     : <span className="text-3xl font-semibold text-muted-foreground">N/A</span>;
@@ -783,13 +972,14 @@ export default function Dashboard() {
               <div className="space-y-1">
                 <div className="text-sm font-medium text-muted-foreground">Market Cap</div>
                 {(() => {
-                  const lastFin = finData[finData.length - 1];
-                  if (!lastFin?.market_cap && lastFin?.market_cap !== 0) {
+                  const lastItem = displayChartData[displayChartData.length - 1];
+                  if (!lastItem?.close_price || !lastItem?.volume) {
                     return <div className="text-3xl font-semibold text-muted-foreground">N/A</div>;
                   }
+                  const marketCap = lastItem.close_price * lastItem.volume;
                   return (
                     <div className="text-3xl font-semibold">
-                      {lastFin.market_cap.toLocaleString("en-US", {
+                      {marketCap.toLocaleString("en-US", {
                         style: "currency",
                         currency: "USD",
                         notation: "compact",
@@ -803,7 +993,7 @@ export default function Dashboard() {
               <div className="space-y-1">
                 <div className="text-sm font-medium text-muted-foreground">Share Volume</div>
                 {(() => {
-                  const lastTime = chartData[chartData.length - 1];
+                  const lastTime = displayChartData[displayChartData.length - 1];
                   if (!lastTime || lastTime.volume == null) {
                     return <div className="text-3xl font-semibold text-muted-foreground">N/A</div>;
                   }
@@ -818,10 +1008,19 @@ export default function Dashboard() {
               <div className="space-y-1">
                 <div className="text-sm font-medium text-muted-foreground">P/E (TTM)</div>
                 {(() => {
-                  const lastFin = finData[finData.length - 1];
-                  if (lastFin?.pe == null) return <div className="text-3xl font-semibold text-muted-foreground">N/A</div>;
+                  const lastItem = displayChartData[displayChartData.length - 1];
+                  // Calculate TTM EPS using the last 4 quarters
+                  const ttmEarnings = displayChartData
+                    .slice(-252) // Approximate trading days in a year
+                    .reduce((sum, item) => sum + (item.earnings || 0), 0);
+                  
+                  if (!lastItem?.close_price || ttmEarnings === 0) {
+                    return <div className="text-3xl font-semibold text-muted-foreground">N/A</div>;
+                  }
+                  
+                  const pe = lastItem.close_price / (ttmEarnings / lastItem.volume);
                   return (
-                    <div className="text-3xl font-semibold">{lastFin.pe.toFixed(2)}</div>
+                    <div className="text-3xl font-semibold">{pe.toFixed(2)}</div>
                   );
                 })()}
               </div>
@@ -829,18 +1028,30 @@ export default function Dashboard() {
               <div className="space-y-1">
                 <div className="text-sm font-medium text-muted-foreground">EPS (TTM)</div>
                 {(() => {
-                  const lastFin = finData[finData.length - 1];
-                  if (!lastFin || lastFin.eps == null) {
+                  const lastItem = displayChartData[displayChartData.length - 1];
+                  // Calculate TTM EPS
+                  const ttmEarnings = displayChartData
+                    .slice(-252) // Approximate trading days in a year
+                    .reduce((sum, item) => sum + (item.earnings || 0), 0);
+                  
+                  if (!lastItem?.volume || ttmEarnings === 0) {
                     return <div className="text-3xl font-semibold text-muted-foreground">N/A</div>;
                   }
+                  
+                  const eps = ttmEarnings / lastItem.volume;
                   return (
                     <div className="text-3xl font-semibold">
-                      {lastFin.eps.toFixed(2)}
+                      {eps.toFixed(2)}
                     </div>
                   );
                 })()}
               </div>
             </div>
+            {intervalError && (
+              <div className="mt-2 text-red-500 text-sm">
+                {intervalError}
+              </div>
+            )}
           </Card>
         )}
       </main>
