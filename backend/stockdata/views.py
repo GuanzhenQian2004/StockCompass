@@ -5,6 +5,7 @@ from .utils import fetch_price_yf
 from .models import StockData
 from .serializers import StockDataSerializer
 from datetime import datetime
+from .utils import unusual_ranges
 
 @api_view(['GET'])
 def stock_data_api(request):
@@ -66,3 +67,47 @@ async def async_stock_data_api(request):
         }
     
     return Response(response_data)
+
+@api_view(['POST'])
+def unusual_ranges_api(request):
+    """
+    API endpoint to calculate unusual date ranges.
+    
+    Expected request JSON structure:
+    {
+        "data": {
+            "2025-01-01": [0.05],
+            "2025-01-02": [0.02],
+            ...
+        }
+    }
+    
+    Response JSON structure on success:
+    {
+        "status_code": 200,
+        "unusual_ranges": [
+            [ "2025-01-10", "2025-01-15" ],
+            [ "2025-02-03", "2025-02-04" ],
+            ...
+        ]
+    }
+    
+    On error, it returns a 500 status with the error message.
+    """
+    # Extract input data from the request body.
+    input_data = request.data.get('data', None)
+    if input_data is None:
+        return Response({"status_code": 400, "error": "Missing 'data' in request"}, status=400)
+    
+    try:
+        # Call the async unusual_ranges function using async_to_sync.
+        ranges = async_to_sync(unusual_ranges)(input_data)
+        return Response({
+            "status_code": 200,
+            "unusual_ranges": ranges
+        })
+    except Exception as e:
+        return Response({
+            "status_code": 500,
+            "error": str(e)
+        }, status=500)

@@ -166,74 +166,80 @@ def reset_table(model):
         else:
             cursor.execute(f"DELETE FROM {table_name};")
 
-
-def generate_time_series(nrow):
+async def unusual_ranges(data):
     """
-    Data Generation Function for Testing Purposes.
-    
+    Asynchronously identify unusual date ranges using a GARCH-based volatility test 
+    and a Central Limit Theorem test on daily price changes.
+
     Parameters:
-        nrow (int)
+        data (dict): Dictionary with keys "time", "price", and optionally "volume".
+                     - "time": list of date strings (format "YYYY-MM-DD")
+                     - "price": list of price values (floats)
+                     - "volume": list of volumes (ignored in this function)
+    Returns:
+        List of tuples, where each tuple contains two strings representing the start 
+        and end dates ("YYYY-MM-DD") of an unusual range.
     """
-    dates = [datetime.datetime.today() - datetime.timedelta(days=days) for days in range(nrow)]
-    prices = [100.0]
+    # Verify that required keys exist.
+    if not data or "time" not in data or "price" not in data:
+        raise ValueError("Data must contain 'time' and 'price' arrays")
     
-    for _ in range(1, nrow):
-        daily_log_return = np.random.normal(loc=0.0002 , scale=0.01)
-        price = prices[-1] * np.exp(daily_log_return)
-        if nrow // 50 <= 10:
-            price = price + 2.1 ** .5
-        
-        prices.append(price)
+    # Convert the time strings to numpy.datetime64 objects.
+    times = np.array([np.datetime64(t) for t in data["time"]])
+    prices = np.array(data["price"], dtype=float)
     
-    log_prices = np.log(prices)
-    daily_log_returns = np.diff(log_prices)
+    if len(prices) < 2:
+        raise ValueError("Not enough price data to compute daily changes.")
     
-    return {date: [r] for date, r in zip(dates[1:], daily_log_returns)}
-
-def unusual_ranges(data=0):
-    """
-    Identify unusual date ranges by combining a GARCH-based volatility test 
-    and a Central Limit Theorem test on daily changes.
+    # Compute daily changes as the difference between consecutive prices.
+    # The daily change corresponding to a day is taken as the difference from the previous day.
+    daily_changes = np.diff(prices)
+    # The corresponding dates for these daily changes are the dates from the second element onward.
+    daily_dates = times[1:]
     
-    If no data is provided (data == 0), a default time series is generated.
-    """
-    if data == 0:
-        data = generate_time_series(10 ** 8)
-    
-    dates = np.array(list(data.keys()))
-    daily_changes = np.array([price[0] for price in data.values()])
-    
+    # Compute the critical value for a two-tailed 95% confidence interval.
     crit_value = scipy.stats.norm.ppf(1 - 0.05 / 2)
     
-    # GARCH-Based Volatility Test
-    garch_fit = arch_model (daily_changes, vol='Garch', p=1, q=1).fit(disp='off')
-    forecast = garch_fit.conditional_volatility
+    # Offload the GARCH model fitting to a separate thread.
+    garch_fit = await asyncio.to_thread(
+        lambda: arch_model(daily_changes, vol='Garch', p=1, q=1).fit(disp='off')
+    )
+    forecast = garch_fit.conditional_volatility  # same length as daily_changes
     
-    # Central Limit Theorem Normal Distribution Test
+    # Calculate basic statistics.
     mean = np.mean(daily_changes)
     stdev = np.std(daily_changes)
     
-    # Combine Tests and Filter Days 
-    try:
-        mask = (np.abs(daily_changes) > (crit_value * forecast)) 
-        mask = mask & ((np.abs(daily_changes - mean) / stdev) > crit_value)
-        unusual_dates = dates[mask]
-        if unusual_dates.size == 0:
-            raise Exception
-    except:
-        mask = (np.abs(daily_changes) > (crit_value * forecast)) 
-        unusual_dates = dates[mask]
+    # Apply the combined test to determine unusual days.
+    mask = (np.abs(daily_changes) > (crit_value * forecast))
+    mask = mask & ((np.abs(daily_changes - mean) / stdev) > crit_value)
+    unusual_dates = daily_dates[mask]
     
-    # Combine Days into Ranges
-    unusual_dates.sort()
+    if unusual_dates.size == 0:
+        raise Exception("No unusual dates found with combined tests")
     
+    # Sort the unusual dates.
+    unusual_dates = np.sort(unusual_dates)
+    # Compute the gaps between consecutive unusual dates.
     gaps = np.diff(unusual_dates)
-    gaps = np.where(gaps > np.median(gaps))[0]
+    # Convert gaps to days (as integers) for comparison.
+    gaps_in_days = gaps.astype('timedelta64[D]').astype(int)
+    median_gap = np.median(gaps_in_days)
+    # Identify indices where the gap is greater than the median gap.
+    gap_indices = np.where(gaps_in_days > median_gap)[0]
     
-    ranges = [(s, e) for s, e in zip(np.r_[unusual_dates[0], unusual_dates[gaps + 1]],
-                                  np.r_[unusual_dates[gaps], unusual_dates[-1]])
-          if s != e]
+    # Group consecutive unusual dates into ranges.
+    if gap_indices.size == 0:
+        ranges = [(unusual_dates[0], unusual_dates[-1])]
+    else:
+        start_indices = np.r_[0, gap_indices + 1]
+        end_indices = np.r_[gap_indices, unusual_dates.size - 1]
+        ranges = [(unusual_dates[s], unusual_dates[e]) for s, e in zip(start_indices, end_indices) if s != e]
     
-    # Return Ranges by Timespan
-    ranges.sort(key=lambda pair: (pair[1] - pair[0]).days, reverse=True)
-    return ranges
+    # Sort the ranges by duration (in days) in descending order.
+    ranges.sort(key=lambda pair: (pair[1] - pair[0]).astype('timedelta64[D]').astype(int), reverse=True)
+    
+    # Convert the numpy.datetime64 objects to strings in "YYYY-MM-DD" format.
+    formatted_ranges = [(str(start.astype('M8[D]')), str(end.astype('M8[D]'))) for start, end in ranges]
+    
+    return formatted_ranges
