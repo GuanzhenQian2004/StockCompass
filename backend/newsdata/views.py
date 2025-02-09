@@ -68,11 +68,15 @@ async def async_news_data_api(request):
             "status_code": 200,
             "complex": complex_res
         }
+        return Response(response_data)
     
     except Exception as e:
         # Log the error if desired, then return a JSON response with the error message.
         error_data = {
             "status_code": 500,
+            "stockname":stockname,
+            "start":start,
+            "end":end,
             "error": str(e)
         }
         return Response(error_data, status=500)

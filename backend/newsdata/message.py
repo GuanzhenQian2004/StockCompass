@@ -87,7 +87,6 @@ def api_enhancement_request_openai(api_key, stock, start, end, explanations, ref
         ],
         stream=False
     )
-
     return response
 
 def generate_data(api_key_1, api_key_2, stock, start, end):
@@ -101,7 +100,7 @@ def generate_data(api_key_1, api_key_2, stock, start, end):
 
 def generate_data_openai(api_key_1, api_key_2, stock, start, end):
     simple_explanations = api_data_request(api_key_1, stock, start, end)
-    complex_explanations = api_enhancement_request(api_key_2, stock, start, end, simple_explanations['content'], simple_explanations["citations"])
+    complex_explanations = api_enhancement_request_openai(api_key_2, stock, start, end, simple_explanations['content'], simple_explanations["citations"])
     # Check for choices key in the returned complex explanations
     return complex_explanations.choices[0].message.content 
 
