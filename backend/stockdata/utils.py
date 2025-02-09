@@ -178,7 +178,7 @@ async def unusual_ranges(data):
                      - "volume": list of volumes (ignored in this function)
     Returns:
         List of tuples, where each tuple contains two strings representing the start 
-        and end dates ("YYYY-MM-DD") of an unusual range.
+        and end dates ("YYYY-MM-DD") of an unusual range. Each range will span at least 2 days.
     """
     # Verify that required keys exist.
     if not data or "time" not in data or "price" not in data:
@@ -242,4 +242,20 @@ async def unusual_ranges(data):
     # Convert the numpy.datetime64 objects to strings in "YYYY-MM-DD" format.
     formatted_ranges = [(str(start.astype('M8[D]')), str(end.astype('M8[D]'))) for start, end in ranges]
     
-    return formatted_ranges
+    # --- Ensure each range spans at least 2 days ---
+    # Determine the maximum date in the input (to avoid extending beyond available data).
+    max_date = times.max()
+    adjusted_ranges = []
+    for start_str, end_str in formatted_ranges:
+        start_date = np.datetime64(start_str)
+        end_date = np.datetime64(end_str)
+        if start_date == end_date:
+            # If start is not the maximum date, extend by one day.
+            if start_date < max_date:
+                end_date = start_date + np.timedelta64(1, 'D')
+            else:
+                # Otherwise, if start is the maximum date, shift the range back by one day.
+                start_date = start_date - np.timedelta64(1, 'D')
+        adjusted_ranges.append((str(start_date.astype('M8[D]')), str(end_date.astype('M8[D]'))))
+    
+    return adjusted_ranges
