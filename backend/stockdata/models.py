@@ -5,14 +5,14 @@ class StockData(models.Model):
     open_price = models.FloatField(null=True)
     high_price = models.FloatField(null=True)
     low_price = models.FloatField(null=True)
-    close_price = models.FloatField(null=True)
-    volume = models.BigIntegerField(null=True)
-    dividends = models.FloatField(null=True)
-    pct_change = models.FloatField(null=True)
-    free_cash_flow = models.FloatField(null=True)
-    eps = models.FloatField(null=True)       
-    market_cap = models.FloatField(null=True)        
-    pe = models.FloatField(null=True)               
+    close_price = models.FloatField(null=True, default=None)  # Added default here
+    volume = models.BigIntegerField(null=True, default=None)
+    pct_change = models.FloatField(default=None, null=True)
+    free_cash_flow = models.FloatField(default=None, null=True)
+    eps = models.FloatField(null=True, blank=True, default=None)
+    profit_margin = models.FloatField(null=True, blank=True, default=None)
+    market_cap = models.FloatField(default=None, null=True)
+    pe = models.FloatField(default=None,null=True)
 
     def __str__(self):
         return f"{self.timestamp} - Close: {self.close_price}"
