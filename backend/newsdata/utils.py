@@ -73,7 +73,8 @@ async def get_news_data(tickers=None, topics=None, time_from=None, time_to=None,
 
     data = response.json()
     if "feed" not in data:
-        raise Exception("Unexpected response format: 'feed' key not found.")
+        print("Warning: 'feed' key not found in Alpha Vantage response:", data)
+        return []
 
     news_feed = data["feed"]
     news_list = []

@@ -1,5 +1,6 @@
 from django.http import JsonResponse
 from .utils import get_news_data
+import json
 
 # Removed @require_GET for simplicity. You can add method checks inside the view.
 async def news_api(request):
@@ -36,4 +37,17 @@ async def news_api(request):
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
 
-    return JsonResponse({"news": news_data})
+    # Transform news_data into the desired complex structure expected by the frontend.
+    # For each article:
+    #   - "explanations": use the article title, defaulting to "News"
+    #   - "references": use the article URL
+    #   - "reasons": use the article source, defaulting to "News Source"
+    #   - "text_summary": join all available summaries into one string.
+    complex_data = {
+        "explanations": [item.get("title") or "News" for item in news_data],
+        "references": [item.get("url") for item in news_data],
+        "reasons": [item.get("source") or "News Source" for item in news_data],
+        "text_summary": "\n".join([item.get("summary") for item in news_data if item.get("summary")])
+    }
+
+    return JsonResponse({"complex": json.dumps(complex_data)})
