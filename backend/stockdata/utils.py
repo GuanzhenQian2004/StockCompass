@@ -1,9 +1,13 @@
 import asyncio
 import yfinance as yf
-import pandas as pd
+import datetime
+import numpy as np
+import scipy.stats
+
 from django.conf import settings
 from .models import StockData
 from django.db import connection
+from arch import arch_model
 
 async def fetch_price_yf(ticker_symbol="AAPL", period="1d", interval="60m"):
     """
@@ -161,3 +165,75 @@ def reset_table(model):
             cursor.execute(f"DELETE FROM sqlite_sequence WHERE name='{table_name}';")
         else:
             cursor.execute(f"DELETE FROM {table_name};")
+
+
+def generate_time_series(nrow):
+    """
+    Data Generation Function for Testing Purposes.
+    
+    Parameters:
+        nrow (int)
+    """
+    dates = [datetime.datetime.today() - datetime.timedelta(days=days) for days in range(nrow)]
+    prices = [100.0]
+    
+    for _ in range(1, nrow):
+        daily_log_return = np.random.normal(loc=0.0002 , scale=0.01)
+        price = prices[-1] * np.exp(daily_log_return)
+        if nrow // 50 <= 10:
+            price = price + 2.1 ** .5
+        
+        prices.append(price)
+    
+    log_prices = np.log(prices)
+    daily_log_returns = np.diff(log_prices)
+    
+    return {date: [r] for date, r in zip(dates[1:], daily_log_returns)}
+
+def unusual_ranges(data=0):
+    """
+    Identify unusual date ranges by combining a GARCH-based volatility test 
+    and a Central Limit Theorem test on daily changes.
+    
+    If no data is provided (data == 0), a default time series is generated.
+    """
+    if data == 0:
+        data = generate_time_series(10 ** 8)
+    
+    dates = np.array(list(data.keys()))
+    daily_changes = np.array([price[0] for price in data.values()])
+    
+    crit_value = scipy.stats.norm.ppf(1 - 0.05 / 2)
+    
+    # GARCH-Based Volatility Test
+    garch_fit = arch_model (daily_changes, vol='Garch', p=1, q=1).fit(disp='off')
+    forecast = garch_fit.conditional_volatility
+    
+    # Central Limit Theorem Normal Distribution Test
+    mean = np.mean(daily_changes)
+    stdev = np.std(daily_changes)
+    
+    # Combine Tests and Filter Days 
+    try:
+        mask = (np.abs(daily_changes) > (crit_value * forecast)) 
+        mask = mask & ((np.abs(daily_changes - mean) / stdev) > crit_value)
+        unusual_dates = dates[mask]
+        if unusual_dates.size == 0:
+            raise Exception
+    except:
+        mask = (np.abs(daily_changes) > (crit_value * forecast)) 
+        unusual_dates = dates[mask]
+    
+    # Combine Days into Ranges
+    unusual_dates.sort()
+    
+    gaps = np.diff(unusual_dates)
+    gaps = np.where(gaps > np.median(gaps))[0]
+    
+    ranges = [(s, e) for s, e in zip(np.r_[unusual_dates[0], unusual_dates[gaps + 1]],
+                                  np.r_[unusual_dates[gaps], unusual_dates[-1]])
+          if s != e]
+    
+    # Return Ranges by Timespan
+    ranges.sort(key=lambda pair: (pair[1] - pair[0]).days, reverse=True)
+    return ranges
