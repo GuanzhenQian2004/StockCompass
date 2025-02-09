@@ -119,3 +119,5 @@ async def get_news_data(tickers=None, topics=None, time_from=None, time_to=None,
 
     print("News data fetched from Alpha Vantage and stored successfully.")
     return news_list
+
+

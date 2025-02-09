@@ -1,13 +1,14 @@
 from asgiref.sync import async_to_sync, sync_to_async
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, renderer_classes
+from rest_framework.renderers import JSONRenderer
 from rest_framework.response import Response
 from .utils import *
 from .models import StockData
 from .serializers import StockDataSerializer
 from datetime import datetime
 
-
 @api_view(['GET'])
+@renderer_classes([JSONRenderer])
 def stock_data_api(request):
     # Wrap the async view so that it runs synchronously.
     return async_to_sync(async_stock_data_api)(request)
@@ -33,16 +34,15 @@ async def async_stock_data_api(request):
         # - Round numeric fields to 2 decimal places (if not None)
         time_series = [
             {
-                "time": datetime.fromisoformat(item["timestamp"].replace('Z','')).strftime("%Y-%m-%d"),
+                "time": datetime.fromisoformat(item["timestamp"].replace('Z', '')).strftime("%Y-%m-%d"),
                 "close_price": round(item["close_price"], 2) if item["close_price"] is not None else None,
                 "volume": item["volume"],
-
             }
             for item in serializer.data
         ]
         fin_data = [
             {
-                "time": datetime.fromisoformat(item["timestamp"].replace('Z','')).strftime("%Y-%m-%d"),
+                "time": datetime.fromisoformat(item["timestamp"].replace('Z', '')).strftime("%Y-%m-%d"),
                 "free_cash_flow": round(item["free_cash_flow"], 3) if item["free_cash_flow"] is not None else None,
                 "eps": round(item["eps"], 2) if item["eps"] is not None else None,
                 "profit_margin": round(item["profit_margin"], 2) if item["profit_margin"] is not None else None,
@@ -69,6 +69,7 @@ async def async_stock_data_api(request):
     return Response(response_data)
 
 @api_view(['POST'])
+@renderer_classes([JSONRenderer])
 def unusual_ranges_api(request):
     """
     API endpoint to calculate unusual date ranges.
@@ -111,7 +112,9 @@ def unusual_ranges_api(request):
             "status_code": 500,
             "error": str(e)
         }, status=500)
+
 @api_view(["GET"])
+@renderer_classes([JSONRenderer])
 def stock_metadata_api(request):
     """
     API endpoint to fetch stock metadata.

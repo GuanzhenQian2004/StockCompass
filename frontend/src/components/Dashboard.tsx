@@ -87,6 +87,7 @@ export default function Dashboard() {
   async function fetchTickerData(tickerSymbol: string) {
     try {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || "";
+      console.log(apiUrl)
       // 1) Fetch 1Y data
       const response1y = await fetch(`${apiUrl}/api/stockdata/?stockname=${tickerSymbol}&period=1y&interval=1d`);
       const data1y = await response1y.json();
