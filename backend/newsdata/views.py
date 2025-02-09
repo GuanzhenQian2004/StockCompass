@@ -1,6 +1,6 @@
 from django.http import JsonResponse
 from .utils import get_news_data
-from message import generate_data
+from .message import generate_data
 
 # Removed @require_GET for simplicity. You can add method checks inside the view.
 # async def news_api(request):
@@ -44,14 +44,12 @@ from rest_framework.decorators import api_view, renderer_classes
 from rest_framework.renderers import JSONRenderer
 from rest_framework.response import Response
 from .utils import *
-from .models import StockData
-from .serializers import StockDataSerializer
 from datetime import datetime
 from django.conf import settings
 
 @api_view(['GET'])
 @renderer_classes([JSONRenderer])
-def news_data_api(request):
+def news_api(request):
     # Wrap the async view so that it runs synchronously.
     return async_to_sync(async_news_data_api)(request)
 
@@ -60,17 +58,16 @@ async def async_news_data_api(request):
         API_KEY_1 = settings.API_PER
         API_KEY_2 = settings.API_DS
         stockname = request.query_params.get('stockname', 'AAPL')
-        period = request.query_params.get('period', '[2025-01-01, 2025-01-10]')
+        start = request.query_params.get('start','2025-01-01')
+        end = request.query_params.get("end",'2025-01-10')
         
         # Generate both simple and complex responses.
-        simple_res, complex_res = generate_data(API_KEY_1, API_KEY_2, stockname, period)
+        complex_res = generate_data(API_KEY_1, API_KEY_2, stockname, start, end)
         
         response_data = {
             "status_code": 200,
-            "simple": simple_res,
             "complex": complex_res
         }
-        return Response(response_data)
     
     except Exception as e:
         # Log the error if desired, then return a JSON response with the error message.
