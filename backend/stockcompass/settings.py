@@ -39,10 +39,12 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'stockdata',
     'newsdata',
-    'rest_framework'
+    'rest_framework',
+    'corsheaders',
 ]
 
 MIDDLEWARE = [
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -136,3 +138,10 @@ NEWS_DATA_SOURCE = "ALPHA"
 
 # session
 SESSION_ID = 'DEFAULT_SESSION'
+
+# Development CORS settings
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:3000",  # Next.js default port
+]
+
+CORS_ALLOW_CREDENTIALS = True
