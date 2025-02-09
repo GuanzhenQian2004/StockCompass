@@ -39,6 +39,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'stockdata',
     'newsdata',
+    'chatbot',
     'rest_framework',
     'corsheaders',
 ]
