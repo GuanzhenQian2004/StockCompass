@@ -1,6 +1,6 @@
 "use client"
 
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import { Tooltip } from "@/components/ui/tooltip"
 
 export type ChartConfig = {
   [key: string]: {
@@ -37,14 +37,12 @@ interface ChartTooltipProps {
   active?: boolean
   payload?: any[]
   config: ChartConfig
-  indicator?: "line" | "bar"
 }
 
 export function ChartTooltipContent({
   active,
   payload,
   config,
-  indicator = "line",
 }: ChartTooltipProps) {
   if (!active || !payload) {
     return null
