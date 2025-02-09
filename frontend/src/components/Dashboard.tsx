@@ -35,6 +35,11 @@ const newsData = {
   ]
 };
 
+// Add this interface near the top of your file, with other types/interfaces
+interface FormattedDataType {
+  [key: string]: number[];
+}
+
 export default function Dashboard() {
   // Default to 1Y so we fetch 1-year data on preload
   const [selectedInterval, setSelectedInterval] = useState<string | null>("1Y");
@@ -54,20 +59,18 @@ export default function Dashboard() {
   const [sliderValue, setSliderValue] = useState<number>(100);
 
   // NEW: Add state and constant for event highlights shading mechanism
+  const [eventRanges, setEventRanges] = useState<Array<{ start: string; end: string }>>([]);
   const [showEventHighlights, setShowEventHighlights] = useState<boolean>(false);
   const [selectedEvent, setSelectedEvent] = useState<string | null>(null);
   const [hoveredEvent, setHoveredEvent] = useState<string | null>(null);
 
-  const eventRanges = [
-    { start: "2024-05-06", end: "2024-05-15" },
-    { start: "2024-09-23", end: "2024-10-03" },
-  ];
-
   // Transform the ranges to include IDs
-  const eventHighlights = eventRanges.map((range, index) => ({
-    id: `event${index + 1}`,
-    ...range
-  }));
+  const eventHighlights = React.useMemo(() => 
+    eventRanges.map((range, index) => ({
+      id: `event${index + 1}`,
+      ...range
+    })), [eventRanges]
+  );
 
   // Compute if controls (ToggleGroup and Slider) should be disabled until max data is loaded and interval dates are set.
   const controlsDisabled = isFetchingMaxData || !intervalStartDate || !intervalEndDate;
@@ -144,6 +147,11 @@ export default function Dashboard() {
     setIntervalStartDate(null);
     setIntervalEndDate(null);
 
+    // Clear event ranges and close the news panel when ticker changes
+    setEventRanges([]);
+    setSelectedEvent(null);
+    setNewsPanelActive(false);
+
     fetchTickerData(ticker);
     fetchMetadata(ticker);
   }, [ticker]);
@@ -207,6 +215,10 @@ export default function Dashboard() {
     const upperSearchValue = searchValue.toUpperCase();
     if (upperSearchValue) {
       setTicker(upperSearchValue);
+      // Clear event ranges and close the news panel
+      setEventRanges([]);
+      setSelectedEvent(null);
+      setNewsPanelActive(false);
     }
   };
 
@@ -223,6 +235,90 @@ export default function Dashboard() {
     
     return endPrice > startPrice ? "up" : "down";
   };
+
+  // Add this function to fetch unusual ranges
+  const fetchUnusualRanges = async () => {
+    try {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+      // Clear the eventRanges so we always start fresh
+      setEventRanges([]);
+
+      // Format data the way your backend expects. For example, here we send parallel arrays:
+      const requestBody = {
+        data: {
+          time: displayChartData.map(item => new Date(item.time).toISOString().split('T')[0]),
+          price: displayChartData.map(item => Number(item.close_price)),
+          volume: displayChartData.map(item => Number(item.volume))
+        }
+      };
+
+      console.log("Fetching unusual ranges with:", requestBody);
+
+      const response = await fetch(`${apiUrl}/api/unusual_range/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(requestBody),
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Error: ${response.status} => ${text}`);
+      }
+
+      const result = await response.json();
+      console.log("Unusual ranges response:", result);
+
+      // Convert each [start, end] to { start, end } and store in state
+      if (Array.isArray(result.unusual_ranges)) {
+        const newRanges = result.unusual_ranges.map(
+          (range: [string, string]) => ({
+            start: range[0],
+            end: range[1],
+          })
+        );
+        setEventRanges(newRanges);
+      }
+
+      // Always show the highlights after fetching
+      setShowEventHighlights(true);
+
+    } catch (error) {
+      console.error("Failed to fetch unusual ranges:", error);
+      // Optionally reset or handle error UI
+      setEventRanges([]);
+      setShowEventHighlights(false);
+    }
+  };
+
+  // 1) Add extra state:
+  const [shouldAnalyzeEvents, setShouldAnalyzeEvents] = useState(false);
+
+  // 2) Modify the button click:
+  const handleEventAnalyzerClick = () => {
+    setSelectedEvent(null);
+    setHoveredEvent(null);
+
+    // Always set the flag, so if the user's data isn't ready yet,
+    // we'll fetch as soon as it becomes ready:
+    setShouldAnalyzeEvents(true);
+  };
+
+  // 3) useEffect that triggers once chart data arrives or user toggles:
+  useEffect(() => {
+    // If the user wants to see events AND our chart data is loaded, go fetch:
+    if (shouldAnalyzeEvents && displayChartData.length > 0) {
+      fetchUnusualRanges();
+      setShouldAnalyzeEvents(false);
+    }
+  }, [shouldAnalyzeEvents, displayChartData]);
+
+  // Around line ~76, you have a "controlsDisabled" boolean.
+  // You can reuse that or create a new "eventAnalyzerDisabled" condition:
+  const eventAnalyzerDisabled = displayChartData.length === 0 || isFetchingMaxData;
+
+  const [newsPanelActive, setNewsPanelActive] = useState<boolean>(false);
+  const [newsPanelDateRange, setNewsPanelDateRange] = useState<string>("");
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -417,8 +513,11 @@ export default function Dashboard() {
                                 onClick={() => {
                                   if (selectedEvent === event.id) {
                                     setSelectedEvent(null);
+                                    setNewsPanelActive(false);
                                   } else {
                                     setSelectedEvent(event.id);
+                                    setNewsPanelActive(true);
+                                    setNewsPanelDateRange(`${event.start} - ${event.end}`);
                                   }
                                 }}
                                 onMouseEnter={() => setHoveredEvent(event.id)}
@@ -627,7 +726,7 @@ export default function Dashboard() {
                           </div>
                         </div>
 
-                        <Button onClick={() => setShowEventHighlights(prev => !prev)}>
+                        <Button onClick={handleEventAnalyzerClick} disabled={eventAnalyzerDisabled}>
                           Event Analyzer
                           <Radar className="ml-2 h-4 w-4" />
                         </Button>
@@ -747,17 +846,16 @@ export default function Dashboard() {
                 </div>
               </Card>
             </div>
-            <div className="w-[400px]">
+
+            {/* Conditionally render the NewsCard based on newsPanelActive */}
+            {newsPanelActive && (
               <NewsCard
-                onClose={() => {
-                  setSelectedInterval(null)
-                  setHoveredInterval(null)
-                }}
+                onClose={() => setNewsPanelActive(false)}
                 newsItems={newsData.newsItems}
                 summary={newsData.summary}
-                dateRange={newsData.dateRange}
+                dateRange={newsPanelDateRange}
               />
-            </div>
+            )}
           </div>
         ) : (
           <Card className="w-full flex flex-col">
@@ -899,8 +997,11 @@ export default function Dashboard() {
                             onClick={() => {
                               if (selectedEvent === event.id) {
                                 setSelectedEvent(null);
+                                setNewsPanelActive(false);
                               } else {
                                 setSelectedEvent(event.id);
+                                setNewsPanelActive(true);
+                                setNewsPanelDateRange(`${event.start} - ${event.end}`);
                               }
                             }}
                             onMouseEnter={() => setHoveredEvent(event.id)}
@@ -1109,7 +1210,7 @@ export default function Dashboard() {
                       </div>
                     </div>
 
-                    <Button onClick={() => setShowEventHighlights(prev => !prev)}>
+                    <Button onClick={handleEventAnalyzerClick} disabled={eventAnalyzerDisabled}>
                       Event Analyzer
                       <Radar className="ml-2 h-4 w-4" />
                     </Button>
