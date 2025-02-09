@@ -40,6 +40,8 @@ export default function Dashboard() {
   const [hoveredInterval, setHoveredInterval] = useState<string | null>(null);
   const [stockMetadata, setStockMetadata] = useState<any>(null);
   const [ticker, setTicker] = useState<string>("NVDA");
+  const [chartData, setChartData] = useState<any[]>([]);
+  const [finData, setFinData] = useState<any[]>([]);
 
   const fetchMetadata = async (tickerSymbol: string) => {
     const apiUrl = process.env.NEXT_PUBLIC_API_URL || "";
@@ -56,21 +58,27 @@ export default function Dashboard() {
 
   useEffect(() => {
     fetchMetadata(ticker);
+    async function fetchNVDAData() {
+      try {
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL || "";
+        const response = await fetch(`${apiUrl}/api/stockdata/?stockname=NVDA&period=1y&interval=1d`);
+        const parsedData = await response.json();
+        if (parsedData.status_code === 200 && parsedData.time_series) {
+          setChartData(parsedData.time_series);
+          if (parsedData.fin_data) {
+            setFinData(parsedData.fin_data);
+          }
+        }
+      } catch (error) {
+        console.error("Failed to fetch NVDA 1y data:", error);
+      }
+    }
+    fetchNVDAData();
   }, []);
 
   const intervals = [
     { id: "fe-mar", label: "Fe-Mar", x1: "Feb", x2: "Mar" },
     { id: "apr-jun", label: "April - June", x1: "Apr", x2: "Jun" }
-  ];
-
-  // Move the inline chart data to a constant so it can be reused by the intervals.
-  const chartData = [
-    { month: "Jan", value: 100 },
-    { month: "Feb", value: 200 },
-    { month: "Mar", value: 150 },
-    { month: "Apr", value: 300 },
-    { month: "May", value: 250 },
-    { month: "Jun", value: 400 },
   ];
 
   return (
@@ -125,7 +133,10 @@ export default function Dashboard() {
                       {stockMetadata ? stockMetadata.longName : "Loading..."}
                     </h2>
                     <p className="text-sm font-medium text-muted-foreground">
-                      {stockMetadata ? `${stockMetadata.exchangeName} · ${stockMetadata.currency} · Last Closed: ${stockMetadata.lastClose}` : ""}
+                      {stockMetadata
+                        ? `${stockMetadata.exchangeName} · ${stockMetadata.currency} · Last Closed: ${stockMetadata.lastClose}`
+                        : "Last Closed: YYYY-MM-DD"
+                      }
                     </p>
                   </div>
                   <div className="flex gap-4">
@@ -229,10 +240,10 @@ export default function Dashboard() {
                           {intervals.map((interval) => {
                             return (() => {
                               // Determine the starting and ending values for the interval.
-                              const startDatum = chartData.find(d => d.month === interval.x1);
-                              const endDatum = chartData.find(d => d.month === interval.x2);
+                              const startDatum = chartData.find(d => d.time === interval.x1);
+                              const endDatum = chartData.find(d => d.time === interval.x2);
                               const trendColor = (startDatum && endDatum)
-                                ? (endDatum.value - startDatum.value >= 0 ? "green" : "red")
+                                ? (endDatum.close_price - startDatum.close_price >= 0 ? "green" : "red")
                                 : "gray";
 
                               const isSelected = selectedInterval === interval.id;
@@ -309,7 +320,7 @@ export default function Dashboard() {
                             })();
                           })}
                           <XAxis
-                            dataKey="month"
+                            dataKey="time"
                             tickLine={false}
                             axisLine={false}
                             tickMargin={8}
@@ -338,7 +349,7 @@ export default function Dashboard() {
                           />
                           <Line
                             type="monotone"
-                            dataKey="value"
+                            dataKey="close_price"
                             stroke="hsl(var(--primary))"
                             strokeWidth={2}
                             dot={false}
@@ -382,29 +393,87 @@ export default function Dashboard() {
                   <div className="space-y-1">
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-medium text-muted-foreground">Prev Close</span>
-                      <span className="text-sm font-medium text-green-600">+2.11%</span>
+                      {(() => {
+                        const lastFin = finData[finData.length - 1];
+                        if (!lastFin?.pct_change && lastFin?.pct_change !== 0) {
+                          return <span className="text-sm font-medium text-muted-foreground">N/A</span>;
+                        }
+                        const sign = lastFin.pct_change > 0 ? "+" : "";
+                        return (
+                          <span className="text-sm font-medium text-green-600 text-muted-foreground">
+                            {sign}{lastFin.pct_change.toFixed(2)}%
+                          </span>
+                        );
+                      })()}
                     </div>
-                    <div className="text-3xl font-semibold">$128.68</div>
+                    {(() => {
+                      const lastItem = chartData[chartData.length - 1];
+                      const price = lastItem?.close_price != null
+                        ? `$${lastItem.close_price.toFixed(2)}`
+                        : <span className="text-3xl font-semibold text-muted-foreground">N/A</span>;
+                      return <div className="text-3xl font-semibold">{price}</div>;
+                    })()}
                   </div>
                   <Separator orientation="vertical" />
                   <div className="space-y-1">
                     <div className="text-sm font-medium text-muted-foreground">Market Cap</div>
-                    <div className="text-3xl font-semibold">3.18T</div>
+                    {(() => {
+                      const lastFin = finData[finData.length - 1];
+                      if (!lastFin?.market_cap && lastFin?.market_cap !== 0) {
+                        return <div className="text-3xl font-semibold text-muted-foreground">N/A</div>;
+                      }
+                      return (
+                        <div className="text-3xl font-semibold">
+                          {lastFin.market_cap.toLocaleString("en-US", {
+                            style: "currency",
+                            currency: "USD",
+                            notation: "compact",
+                            compactDisplay: "short",
+                          })}
+                        </div>
+                      );
+                    })()}
                   </div>
                   <Separator orientation="vertical" />
                   <div className="space-y-1">
                     <div className="text-sm font-medium text-muted-foreground">Share Volume</div>
-                    <div className="text-3xl font-semibold">226,819,205</div>
+                    {(() => {
+                      const lastTime = chartData[chartData.length - 1];
+                      if (!lastTime || lastTime.volume == null) {
+                        return <div className="text-3xl font-semibold text-muted-foreground">N/A</div>;
+                      }
+                      return (
+                        <div className="text-3xl font-semibold">
+                          {lastTime.volume.toLocaleString()}
+                        </div>
+                      );
+                    })()}
                   </div>
                   <Separator orientation="vertical" />
                   <div className="space-y-1">
                     <div className="text-sm font-medium text-muted-foreground">P/E (TTM)</div>
-                    <div className="text-3xl font-semibold">51.32</div>
+                    {(() => {
+                      const lastFin = finData[finData.length - 1];
+                      if (lastFin?.pe == null) return <div className="text-3xl font-semibold text-muted-foreground">N/A</div>;
+                      return (
+                        <div className="text-3xl font-semibold">{lastFin.pe.toFixed(2)}</div>
+                      );
+                    })()}
                   </div>
                   <Separator orientation="vertical" />
                   <div className="space-y-1">
                     <div className="text-sm font-medium text-muted-foreground">EPS (TTM)</div>
-                    <div className="text-3xl font-semibold">2.53</div>
+                    {(() => {
+                      const lastFin = finData[finData.length - 1];
+                      if (!lastFin || lastFin.eps == null) {
+                        return <div className="text-3xl font-semibold text-muted-foreground">N/A</div>;
+                      }
+                      return (
+                        <div className="text-3xl font-semibold">
+                          {lastFin.eps.toFixed(2)}
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
               </Card>
@@ -429,7 +498,10 @@ export default function Dashboard() {
                   {stockMetadata ? stockMetadata.longName : "Loading..."}
                 </h2>
                 <p className="text-sm font-medium text-muted-foreground">
-                  {stockMetadata ? `${stockMetadata.exchangeName} · ${stockMetadata.currency} · Last Closed: ${stockMetadata.lastClose}` : ""}
+                  {stockMetadata
+                    ? `${stockMetadata.exchangeName} · ${stockMetadata.currency} · Last Closed: ${stockMetadata.lastClose}`
+                    : "Last Closed: YYYY-MM-DD"
+                  }
                 </p>
               </div>
               <div className="flex gap-4">
@@ -533,10 +605,10 @@ export default function Dashboard() {
                       {intervals.map((interval) => {
                         return (() => {
                           // Determine the starting and ending values for the interval.
-                          const startDatum = chartData.find(d => d.month === interval.x1);
-                          const endDatum = chartData.find(d => d.month === interval.x2);
+                          const startDatum = chartData.find(d => d.time === interval.x1);
+                          const endDatum = chartData.find(d => d.time === interval.x2);
                           const trendColor = (startDatum && endDatum)
-                            ? (endDatum.value - startDatum.value >= 0 ? "green" : "red")
+                            ? (endDatum.close_price - startDatum.close_price >= 0 ? "green" : "red")
                             : "gray";
 
                           const isSelected = selectedInterval === interval.id;
@@ -613,7 +685,7 @@ export default function Dashboard() {
                         })();
                       })}
                       <XAxis
-                        dataKey="month"
+                        dataKey="time"
                         tickLine={false}
                         axisLine={false}
                         tickMargin={8}
@@ -642,7 +714,7 @@ export default function Dashboard() {
                       />
                       <Line
                         type="monotone"
-                        dataKey="value"
+                        dataKey="close_price"
                         stroke="hsl(var(--primary))"
                         strokeWidth={2}
                         dot={false}
@@ -686,29 +758,87 @@ export default function Dashboard() {
               <div className="space-y-1">
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium text-muted-foreground">Prev Close</span>
-                  <span className="text-sm font-medium text-green-600">+2.11%</span>
+                  {(() => {
+                    const lastFin = finData[finData.length - 1];
+                    if (!lastFin?.pct_change && lastFin?.pct_change !== 0) {
+                      return <span className="text-sm font-medium text-muted-foreground">N/A</span>;
+                    }
+                    const sign = lastFin.pct_change > 0 ? "+" : "";
+                    return (
+                      <span className="text-sm font-medium text-green-600 text-muted-foreground">
+                        {sign}{lastFin.pct_change.toFixed(2)}%
+                      </span>
+                    );
+                  })()}
                 </div>
-                <div className="text-3xl font-semibold">$128.68</div>
+                {(() => {
+                  const lastItem = chartData[chartData.length - 1];
+                  const price = lastItem?.close_price != null
+                    ? `$${lastItem.close_price.toFixed(2)}`
+                    : <span className="text-3xl font-semibold text-muted-foreground">N/A</span>;
+                  return <div className="text-3xl font-semibold">{price}</div>;
+                })()}
               </div>
               <Separator orientation="vertical" />
               <div className="space-y-1">
                 <div className="text-sm font-medium text-muted-foreground">Market Cap</div>
-                <div className="text-3xl font-semibold">3.18T</div>
+                {(() => {
+                  const lastFin = finData[finData.length - 1];
+                  if (!lastFin?.market_cap && lastFin?.market_cap !== 0) {
+                    return <div className="text-3xl font-semibold text-muted-foreground">N/A</div>;
+                  }
+                  return (
+                    <div className="text-3xl font-semibold">
+                      {lastFin.market_cap.toLocaleString("en-US", {
+                        style: "currency",
+                        currency: "USD",
+                        notation: "compact",
+                        compactDisplay: "short",
+                      })}
+                    </div>
+                  );
+                })()}
               </div>
               <Separator orientation="vertical" />
               <div className="space-y-1">
                 <div className="text-sm font-medium text-muted-foreground">Share Volume</div>
-                <div className="text-3xl font-semibold">226,819,205</div>
+                {(() => {
+                  const lastTime = chartData[chartData.length - 1];
+                  if (!lastTime || lastTime.volume == null) {
+                    return <div className="text-3xl font-semibold text-muted-foreground">N/A</div>;
+                  }
+                  return (
+                    <div className="text-3xl font-semibold">
+                      {lastTime.volume.toLocaleString()}
+                    </div>
+                  );
+                })()}
               </div>
               <Separator orientation="vertical" />
               <div className="space-y-1">
                 <div className="text-sm font-medium text-muted-foreground">P/E (TTM)</div>
-                <div className="text-3xl font-semibold">51.32</div>
+                {(() => {
+                  const lastFin = finData[finData.length - 1];
+                  if (lastFin?.pe == null) return <div className="text-3xl font-semibold text-muted-foreground">N/A</div>;
+                  return (
+                    <div className="text-3xl font-semibold">{lastFin.pe.toFixed(2)}</div>
+                  );
+                })()}
               </div>
               <Separator orientation="vertical" />
               <div className="space-y-1">
                 <div className="text-sm font-medium text-muted-foreground">EPS (TTM)</div>
-                <div className="text-3xl font-semibold">2.53</div>
+                {(() => {
+                  const lastFin = finData[finData.length - 1];
+                  if (!lastFin || lastFin.eps == null) {
+                    return <div className="text-3xl font-semibold text-muted-foreground">N/A</div>;
+                  }
+                  return (
+                    <div className="text-3xl font-semibold">
+                      {lastFin.eps.toFixed(2)}
+                    </div>
+                  );
+                })()}
               </div>
             </div>
           </Card>
