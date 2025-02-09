@@ -93,4 +93,4 @@ if __name__ == "__main__":
 # python Simple_Explanation.py --api_key_1 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 --api_key_2 sk-d7223df849cf4c1d8d97c7178c04e932 --stock AAPL --start "2022-01-01" --end "2022-01-31"
 
 
-# python message.py --api_key_1 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 --api_key_2 sk-d7223df849cf4c1d8d97c7178c04e932 --stock AAPL --start "2022-01-01" --end "2022-01-31"
+# python Simple_Explanation.py --api_key_1 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 --api_key_2 sk-d7223df849cf4c1d8d97c7178c04e932 --stock AAPL --start "2022-01-01" --end "2022-01-31"
