@@ -66,7 +66,7 @@ def api_enhancement_request(api_key, stock, start, end, explanations, references
     return send_post_request(url, payload, headers)
 
 def api_enhancement_request_openai(api_key, stock, start, end, explanations, references):
-    client = OpenAI(api_key="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")
+    client = OpenAI(api_key=api_key)
 
     setting =  """ You will be provided with a list of citations to various news sources and a text string describing possible explanations for a drop in stock performance. Your job is to analyze this string and then rethink the provided explanations. Check each of the sites and enhance the explanations by providing additional details and context. Feel free to remove explanations that don't make much sense. YOU WILL BE EXPECTED TO FIND MORE RESOURCES. You will be evaluated on the quality and novelty of your enhancements in that order. Quality is measured by the degree to which your data is supported by the references you present. Novelty is the likelihood that another model would not present this information. Be concise and to the point. If any of the explanations appear weak, ignore them and focus on improving the others. DO NOT MENTIONED UNSUPPORTED HYPOTHETICAL CLAIMS. YOUR OUTPUT MUST BE IN THE JSON FORMAT: {\"explanations\": [\"explanation1\", \"explanation2\"], \"reasons\": [\"reason1\", \"reason2\"], \"references\": [\"reference1\", \"reference2\"], \"text_summary\": \"summary\"}" """
     
@@ -115,13 +115,3 @@ if __name__ == "__main__":
     args = parser.parse_args()
     print(generate_data_openai(args.api_key_1,args.api_key_2, args.stock, args.start, args.end))
 
-# Example usage:
-
-# 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
-# sk-db6f21fd2b0a4e67b5c536f9d325ca8d
-# sk-d7223df849cf4c1d8d97c7178c04e932
-
-# python Simple_Explanation.py --api_key_1 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 --api_key_2 sk-d7223df849cf4c1d8d97c7178c04e932 --stock AAPL --start "2022-01-01" --end "2022-01-31"
-
-
-# python message.py --api_key_1 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 --api_key_2 sk-d7223df849cf4c1d8d97c7178c04e932 --stock AAPL --start "2022-01-01" --end "2022-01-31"
