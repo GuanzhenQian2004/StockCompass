@@ -33,9 +33,15 @@ export function ChartContainer({ config, children }: ChartContainerProps) {
   )
 }
 
+type ChartTooltipItem = {
+  dataKey: string
+  value: number
+  [key: string]: unknown
+}
+
 interface ChartTooltipProps {
   active?: boolean
-  payload?: any[]
+  payload?: ChartTooltipItem[]
   config: ChartConfig
 }
 
@@ -51,7 +57,7 @@ export function ChartTooltipContent({
   return (
     <div className="rounded-lg border bg-background p-2 shadow-sm">
       <div className="grid grid-cols-2 gap-2">
-        {payload.map((item: any) => (
+        {payload.map((item: ChartTooltipItem) => (
           <div key={item.dataKey} className="flex flex-col">
             <span className="text-[0.70rem] uppercase text-muted-foreground">
               {config[item.dataKey].label}
