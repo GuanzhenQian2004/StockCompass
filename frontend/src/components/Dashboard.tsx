@@ -320,6 +320,70 @@ export default function Dashboard() {
   const [newsPanelActive, setNewsPanelActive] = useState<boolean>(false);
   const [newsPanelDateRange, setNewsPanelDateRange] = useState<string>("");
 
+  // NEW: State to hold the OpenAI analysis response (text + reference urls)
+  const [openAIResponse, setOpenAIResponse] = useState<string>("");
+
+  // NEW: Helper function to fetch analysis from OpenAI via your backend endpoint
+  async function fetchOpenAIAnalysis(start: string, end: string, companyName: string, companyTicker: string) {
+    console.log("Sending request to OpenAI API with:", { start, end, companyName, companyTicker });
+
+    // Calculate price change percentage between start and end dates
+    const startPrice = displayChartData.find(item => item.time.includes(start))?.close_price;
+    const endPrice = displayChartData.find(item => item.time.includes(end))?.close_price;
+    const priceChangePercent = startPrice && endPrice 
+      ? ((endPrice - startPrice) / startPrice * 100).toFixed(2)
+      : null;
+
+    // Build a more specific prompt with actual data
+    const prompt = `
+      Analyze the historical stock performance of ${companyName} (${companyTicker}) for the period between ${start} and ${end}.
+      
+      Key Data Points:
+      - Price Change: ${priceChangePercent}%
+      - Starting Price: $${startPrice?.toFixed(2)}
+      - Ending Price: $${endPrice?.toFixed(2)}
+      
+      Please provide:
+      1. A technical analysis of the price movement during this period
+      2. Identification of any significant market events or company news that occurred
+      3. Analysis of volume trends and their implications
+      4. Comparison with broader market performance during this timeframe
+      
+      Focus on factual historical data and events that have already occurred.
+    `.trim();
+
+    try {
+      const response = await fetch("/api/openai_analysis", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          prompt,
+          chartData: displayChartData
+            .filter(item => item.time >= start && item.time <= end)
+            .map(item => ({
+              date: item.time,
+              price: item.close_price,
+              volume: item.volume
+            }))
+        })
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("Failed to fetch OpenAI analysis:", errorText);
+        setOpenAIResponse("Failed to fetch analysis. Please try again.");
+        return;
+      }
+
+      const data = await response.json();
+      console.log("Received OpenAI response:", data);
+      setOpenAIResponse(data.answer);
+    } catch (error) {
+      console.error("Error fetching OpenAI analysis:", error);
+      setOpenAIResponse("An error occurred while fetching the analysis.");
+    }
+  }
+
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <header className="border-b flex-none">
@@ -514,10 +578,18 @@ export default function Dashboard() {
                                   if (selectedEvent === event.id) {
                                     setSelectedEvent(null);
                                     setNewsPanelActive(false);
+                                    setOpenAIResponse(""); // Clear previous analysis
                                   } else {
                                     setSelectedEvent(event.id);
                                     setNewsPanelActive(true);
                                     setNewsPanelDateRange(`${event.start} - ${event.end}`);
+                                    console.log("Triggered analysis for event:", event);
+                                    if (stockMetadata && ticker) {
+                                      // Call OpenAI analysis using the event dates and company info
+                                      fetchOpenAIAnalysis(event.start, event.end, stockMetadata.longName, ticker);
+                                    } else {
+                                      console.log("Stock metadata not available. Cannot fetch OpenAI analysis.");
+                                    }
                                   }
                                 }}
                                 onMouseEnter={() => setHoveredEvent(event.id)}
@@ -998,10 +1070,18 @@ export default function Dashboard() {
                               if (selectedEvent === event.id) {
                                 setSelectedEvent(null);
                                 setNewsPanelActive(false);
+                                setOpenAIResponse(""); // Clear previous analysis
                               } else {
                                 setSelectedEvent(event.id);
                                 setNewsPanelActive(true);
                                 setNewsPanelDateRange(`${event.start} - ${event.end}`);
+                                console.log("Triggered analysis for event:", event);
+                                if (stockMetadata && ticker) {
+                                  // Call OpenAI analysis using the event dates and company info
+                                  fetchOpenAIAnalysis(event.start, event.end, stockMetadata.longName, ticker);
+                                } else {
+                                  console.log("Stock metadata not available. Cannot fetch OpenAI analysis.");
+                                }
                               }
                             }}
                             onMouseEnter={() => setHoveredEvent(event.id)}
@@ -1336,6 +1416,42 @@ export default function Dashboard() {
           </Card>
         )}
       </main>
+
+      {/* Right panel for news/analysis */}
+      {newsPanelActive && (
+        <div className="w-1/4 p-4 border-l">
+          <Card className="h-full p-4">
+            <div className="space-y-4">
+              <div className="flex justify-between items-center">
+                <h3 className="text-lg font-semibold">Market Analysis</h3>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setNewsPanelActive(false);
+                    setOpenAIResponse("");
+                  }}
+                >
+                  ×
+                </Button>
+              </div>
+              
+              <div className="text-sm text-muted-foreground">
+                {newsPanelDateRange}
+              </div>
+              
+              <Separator />
+              
+              {/* Display OpenAI Analysis */}
+              <div className="space-y-4">
+                <div className="text-sm leading-relaxed whitespace-pre-wrap">
+                  {openAIResponse || "Loading analysis..."}
+                </div>
+              </div>
+            </div>
+          </Card>
+        </div>
+      )}
     </div>
   )
 }
