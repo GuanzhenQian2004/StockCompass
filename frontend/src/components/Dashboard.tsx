@@ -1,8 +1,8 @@
 "use client"
 
 import * as React from "react"
-import { useState, useEffect } from "react"
-import { Search, CircleUser, ArrowUpCircle, ArrowDownCircle, Radar } from "lucide-react"
+import { useState, useEffect, useMemo } from "react"
+import { Search, CircleUser, ArrowUpCircle, ArrowDownCircle, Radar, X } from "lucide-react"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -12,35 +12,34 @@ import { Slider } from "@/components/ui/slider"
 import Image from 'next/image'
 import { LineChart, Line, ResponsiveContainer, CartesianGrid, XAxis, YAxis, Tooltip, ReferenceArea } from "recharts"
 import NewsCard from "./NewsCard"
-
-const newsData = {
-  dateRange: "Jun 6, 2023 - Jun 10, 2023",
-  summary: "Competition from Chinese AI firm DeepSeek: Nvidia's shares plunged 17% on January 27, 2025, amid concerns about competition from DeepSeek, a Chinese artificial intelligence start-up.\n\nThis led to over $590 billion being wiped off Nvidia's market value, marking the biggest one-day value loss for any company in history.",
-  newsItems: [
-    {
-      title: "Why Nvidia stock dip after deep seek launched its new model",
-      source: "Tech Crunch",
-      link: "https://www.marketwatch.com/press-release/stelia-announced-as-gold-sponsor-for-nvidia-gtc-showcasing-hyperband-and-leading-ai-scalability-discussion-a5bbb8ff"
-    },
-    {
-      title: "Nvidia plunged 17% on Monday, which caught investors unprepared",
-      source: "CNBC",
-      link: "https://www.marketwatch.com/press-release/stelia-announced-as-gold-sponsor-for-nvidia-gtc-showcasing-hyperband-and-leading-ai-scalability-discussion-a5bbb8ff"
-    },
-    {
-      title: "The REAL reason Nvidia stocks crash - and the lessons behind",
-      source: "Market Watch",
-      link: "https://www.marketwatch.com/press-release/stelia-announced-as-gold-sponsor-for-nvidia-gtc-showcasing-hyperband-and-leading-ai-scalability-discussion-a5bbb8ff"
-    }
-  ]
-};
+import { fetchNewsData } from "@/lib/api"
 
 // Add this interface near the top of your file, with other types/interfaces
 interface FormattedDataType {
   [key: string]: number[];
 }
 
+interface NewsData {
+  explanations: string[];
+  references: string[];
+  reasons: string[];
+  text_summary: string;
+}
+
 export default function Dashboard() {
+  // Update the formatDate function to handle UTC dates correctly
+  const formatDate = (date: Date | string) => {
+    // Create date object and force UTC handling
+    const d = new Date(date + 'T00:00:00Z');
+    
+    return d.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      timeZone: 'UTC'  // Force UTC timezone for display
+    });
+  };
+
   // Default to 1Y so we fetch 1-year data on preload
   const [selectedInterval, setSelectedInterval] = useState<string | null>("1Y");
   const [hoveredInterval, setHoveredInterval] = useState<string | null>(null);
@@ -74,14 +73,6 @@ export default function Dashboard() {
 
   // Compute if controls (ToggleGroup and Slider) should be disabled until max data is loaded and interval dates are set.
   const controlsDisabled = isFetchingMaxData || !intervalStartDate || !intervalEndDate;
-
-  // NEW: Helper function to format dates as MM-DD-YYYY.
-  function formatDate(date: Date): string {
-    const month = (date.getMonth() + 1).toString().padStart(2, "0");
-    const day = date.getDate().toString().padStart(2, "0");
-    const year = date.getFullYear();
-    return `${month}-${day}-${year}`;
-  }
 
   // NEW: This function fetches data for any ticker: first 1Y, then max, merges, sets state
   async function fetchTickerData(tickerSymbol: string) {
@@ -244,10 +235,13 @@ export default function Dashboard() {
       // Clear the eventRanges so we always start fresh
       setEventRanges([]);
 
-      // Format data the way your backend expects. For example, here we send parallel arrays:
+      // Format data with proper date handling
       const requestBody = {
         data: {
-          time: displayChartData.map(item => new Date(item.time).toISOString().split('T')[0]),
+          time: displayChartData.map(item => 
+            // Keep dates in YYYY-MM-DD format without timezone conversion
+            item.time.split('T')[0]
+          ),
           price: displayChartData.map(item => Number(item.close_price)),
           volume: displayChartData.map(item => Number(item.volume))
         }
@@ -320,6 +314,101 @@ export default function Dashboard() {
   const [newsPanelActive, setNewsPanelActive] = useState<boolean>(false);
   const [newsPanelDateRange, setNewsPanelDateRange] = useState<string>("");
 
+  // Add news-related state variables:
+  const [newsDetails, setNewsDetails] = useState<NewsData | null>(null);
+  const [isNewsLoading, setIsNewsLoading] = useState<boolean>(false);
+
+  // Add this to your state declarations
+  const [clickedEvent, setClickedEvent] = useState<{start: string, end: string} | null>(null);
+
+  // Add this to your state declarations at the top of the component
+  const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
+
+  // Add this near your other state declarations
+  const [activeRequest, setActiveRequest] = useState<AbortController | null>(null);
+
+  // Update the handleEventClick function
+  const handleEventClick = async (eventId: string) => {
+    const clickedEvent = eventHighlights.find(event => event.id === eventId);
+    if (!clickedEvent) return;
+
+    // If there's an active request, abort it
+    if (activeRequest) {
+      activeRequest.abort();
+    }
+
+    // If clicking the same event that's already selected, close the panel
+    if (selectedEventId === eventId) {
+      setSelectedEventId(null);
+      setNewsPanelActive(false);
+      setNewsDetails(null);
+      setClickedEvent(null);
+      return;
+    }
+
+    // Create new AbortController for this request
+    const controller = new AbortController();
+    setActiveRequest(controller);
+
+    // Update UI state
+    setSelectedEventId(eventId);
+    setClickedEvent({
+      start: clickedEvent.start,
+      end: clickedEvent.end
+    });
+    setIsNewsLoading(true);
+    setNewsPanelActive(true);
+    setNewsDetails(null); // Clear previous news data
+
+    try {
+      const fetchedNews = await fetchNewsData(
+        ticker,
+        "max",
+        "1d",
+        clickedEvent.start,
+        clickedEvent.end,
+        controller.signal
+      );
+      
+      // Only update state if this request wasn't aborted
+      if (!controller.signal.aborted) {
+        setNewsDetails(fetchedNews);
+      }
+    } catch (err: unknown) {
+      // Only handle non-abort errors
+      if (err instanceof Error && err.name !== 'AbortError') {
+        console.error("Failed to fetch news data:", err);
+        setNewsDetails(null);
+      }
+      // Silently ignore AbortError as it's expected behavior
+    } finally {
+      if (!controller.signal.aborted) {
+        setIsNewsLoading(false);
+        setActiveRequest(null);
+      }
+    }
+  };
+
+  // Memoize mapped news items only if newsDetails.explanations is an array
+  const mappedNewsItems = useMemo(() => {
+    if (!newsDetails || !Array.isArray(newsDetails.explanations)) return [];
+    return newsDetails.explanations.map((title, index) => ({
+      title,
+      source: newsDetails.reasons?.[index] || "",
+      link: newsDetails.references?.[index] || "#"
+    }));
+  }, [newsDetails]);
+
+  // Add cleanup effect
+  useEffect(() => {
+    return () => {
+      // Cleanup function: abort any pending request when component unmounts
+      if (activeRequest) {
+        activeRequest.abort();
+      }
+    };
+  }, []);
+
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <header className="border-b flex-none">
@@ -369,11 +458,10 @@ export default function Dashboard() {
         </div>
       </header>
 
-
-      <main className="p-8 flex-1 flex">
+      <main className="flex-1 flex p-8 gap-4 h-[calc(100vh-5rem)]">
         {selectedInterval ? (
-          <div className="flex w-full gap-5">
-            <div className="flex-1 min-w-0">
+          <div className="flex flex-1 gap-5 h-full">
+            <div className={`transition-all duration-200 ${newsPanelActive ? 'flex-1' : 'w-full'}`}>
               <Card className="flex flex-col h-full">
                 <div className="px-7 py-6 flex justify-between items-start border-b">
                   <div className="space-y-1.5">
@@ -448,24 +536,6 @@ export default function Dashboard() {
                               />
                             </pattern>
                             <pattern
-                              id="diagonalPattern"
-                              patternUnits="userSpaceOnUse"
-                              width="8"
-                              height="8"
-                            >
-                              <rect width="8" height="8" fill="#e5e7eb" opacity="0.5"/>
-                              <path
-                                d="M-2,2 l4,-4
-                                   M0,8 l8,-8
-                                   M6,10 l4,-4"
-                                style={{
-                                  stroke: "#6b7280",
-                                  strokeWidth: 1.5,
-                                  opacity: 0.6
-                                }}
-                              />
-                            </pattern>
-                            <pattern
                               id="diagonalPatternGreen"
                               patternUnits="userSpaceOnUse"
                               width="8"
@@ -489,7 +559,7 @@ export default function Dashboard() {
                             const trend = calculatePriceTrend(chartData, event.start, event.end);
                             
                             let fillColor: string;
-                            if (selectedEvent === event.id) {
+                            if (selectedEventId === event.id) {
                               fillColor = trend === "up" 
                                 ? "url(#diagonalPatternGreen)" 
                                 : "url(#diagonalPatternRed)";
@@ -509,52 +579,61 @@ export default function Dashboard() {
                                 x1={event.start}
                                 x2={event.end}
                                 fill={fillColor}
-                                fillOpacity={selectedEvent === event.id ? 1 : 0.5}
-                                onClick={() => {
-                                  if (selectedEvent === event.id) {
-                                    setSelectedEvent(null);
-                                    setNewsPanelActive(false);
-                                  } else {
-                                    setSelectedEvent(event.id);
-                                    setNewsPanelActive(true);
-                                    setNewsPanelDateRange(`${event.start} - ${event.end}`);
-                                  }
-                                }}
+                                fillOpacity={selectedEventId === event.id ? 1 : 0.3}
+                                onClick={() => handleEventClick(event.id)}
                                 onMouseEnter={() => setHoveredEvent(event.id)}
                                 onMouseLeave={() => setHoveredEvent(null)}
-                                cursor="pointer"
+                                style={{ cursor: 'pointer' }}
                                 label={
-                                  hoveredEvent === event.id && selectedEvent !== event.id
+                                  hoveredEvent === event.id && selectedEventId !== event.id
                                     ? ({ viewBox }) => {
                                         const { x, y, width, height } = viewBox;
                                         const popupWidth = 100;
                                         const popupHeight = 30;
                                         return (
-                                          <g>
+                                          <g style={{ transform: 'translateZ(1000px)' }}>
+                                            {/* Semi-transparent background overlay */}
                                             <rect
+                                              x={0}
+                                              y={0}
+                                              width="100%"
+                                              height="100%"
+                                              fill="transparent"
+                                              style={{ pointerEvents: 'none' }}
+                                            />
+                                            {/* Popup container */}
+                                            <foreignObject
                                               x={x + width / 2 - popupWidth / 2}
                                               y={y + height * 0.1 - popupHeight / 2}
                                               width={popupWidth}
                                               height={popupHeight}
-                                              rx={5}
-                                              fill="hsl(var(--background))"
-                                              stroke="hsl(var(--border))"
-                                              strokeWidth={1}
-                                              style={{
-                                                filter: "drop-shadow(0 2px 4px rgb(0 0 0 / 0.1))",
-                                                pointerEvents: "none",
+                                              style={{ 
+                                                overflow: 'visible',
+                                                pointerEvents: 'none',
                                               }}
-                                            />
-                                            <text
-                                              x={x + width / 2}
-                                              y={y + height * 0.1}
-                                              textAnchor="middle"
-                                              dominantBaseline="middle"
-                                              className="text-sm font-medium fill-foreground select-none"
-                                              style={{ pointerEvents: "none" }}
                                             >
-                                              Investigate
-                                            </text>
+                                              <div
+                                                style={{
+                                                  background: 'hsl(var(--background))',
+                                                  border: '1px solid hsl(var(--border))',
+                                                  borderRadius: '5px',
+                                                  padding: '6px 12px',
+                                                  boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                                                  position: 'relative',
+                                                  zIndex: 50,
+                                                  display: 'flex',
+                                                  alignItems: 'center',
+                                                  justifyContent: 'center',
+                                                  pointerEvents: 'none',
+                                                }}
+                                              >
+                                                <span
+                                                  className="text-sm font-medium text-foreground select-none"
+                                                >
+                                                  Investigate
+                                                </span>
+                                              </div>
+                                            </foreignObject>
                                           </g>
                                         );
                                       }
@@ -587,7 +666,7 @@ export default function Dashboard() {
 
                               return (
                                 <ReferenceArea
-                                  key={interval.id}
+                                  key={`${interval.x1}-${interval.x2}`}
                                   x1={interval.x1}
                                   x2={interval.x2}
                                   fill={fillColor}
@@ -611,31 +690,49 @@ export default function Dashboard() {
                                           const popupWidth = 100;
                                           const popupHeight = 30;
                                           return (
-                                            <g>
+                                            <g style={{ transform: 'translateZ(1000px)' }}>
+                                              {/* Semi-transparent background overlay */}
                                               <rect
+                                                x={0}
+                                                y={0}
+                                                width="100%"
+                                                height="100%"
+                                                fill="transparent"
+                                                style={{ pointerEvents: 'none' }}
+                                              />
+                                              {/* Popup container */}
+                                              <foreignObject
                                                 x={x + width / 2 - popupWidth / 2}
                                                 y={y + height * 0.1 - popupHeight / 2}
                                                 width={popupWidth}
                                                 height={popupHeight}
-                                                rx={5}
-                                                fill="hsl(var(--background))"
-                                                stroke="hsl(var(--border))"
-                                                strokeWidth={1}
-                                                style={{
-                                                  filter: "drop-shadow(0 2px 4px rgb(0 0 0 / 0.1))",
-                                                  pointerEvents: "none",
+                                                style={{ 
+                                                  overflow: 'visible',
+                                                  pointerEvents: 'none',
                                                 }}
-                                              />
-                                              <text
-                                                x={x + width / 2}
-                                                y={y + height * 0.1}
-                                                textAnchor="middle"
-                                                dominantBaseline="middle"
-                                                className="text-sm font-medium fill-foreground select-none"
-                                                style={{ pointerEvents: "none" }}
                                               >
-                                                Investigate
-                                              </text>
+                                                <div
+                                                  style={{
+                                                    background: 'hsl(var(--background))',
+                                                    border: '1px solid hsl(var(--border))',
+                                                    borderRadius: '5px',
+                                                    padding: '6px 12px',
+                                                    boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                                                    position: 'relative',
+                                                    zIndex: 50,
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    justifyContent: 'center',
+                                                    pointerEvents: 'none',
+                                                  }}
+                                                >
+                                                  <span
+                                                    className="text-sm font-medium text-foreground select-none"
+                                                  >
+                                                    Investigate
+                                                  </span>
+                                                </div>
+                                              </foreignObject>
                                             </g>
                                           );
                                         }
@@ -847,14 +944,86 @@ export default function Dashboard() {
               </Card>
             </div>
 
-            {/* Conditionally render the NewsCard based on newsPanelActive */}
             {newsPanelActive && (
-              <NewsCard
-                onClose={() => setNewsPanelActive(false)}
-                newsItems={newsData.newsItems}
-                summary={newsData.summary}
-                dateRange={newsPanelDateRange}
-              />
+              <div className="w-96 h-full">
+                <Card className="h-full flex flex-col">
+                  <div className="p-4 border-b flex justify-between items-start">
+                    <div>
+                      {clickedEvent && (
+                        <>
+                          <h2 className="text-sm font-medium text-muted-foreground">
+                            Volatile Period
+                          </h2>
+                          <p className="text-lg font-semibold">
+                            {formatDate(clickedEvent.start)} - {formatDate(clickedEvent.end)}
+                          </p>
+                        </>
+                      )}
+                    </div>
+                    <Button 
+                      variant="ghost" 
+                      size="icon"
+                      onClick={() => {
+                        setNewsPanelActive(false);
+                        setSelectedEvent(null);
+                      }}
+                      className="h-8 w-8 -mt-1"
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+
+                  <div 
+                    className="flex-1 overflow-y-auto p-4" 
+                    style={{ '--scrollbar-width': '8px' } as React.CSSProperties}
+                  >
+                    {isNewsLoading ? (
+                      <div className="flex items-center justify-center h-full">
+                        <div 
+                          className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" 
+                        />
+                      </div>
+                    ) : (
+                      <>
+                        {newsDetails?.text_summary && (
+                          <div className="mb-4">
+                            <h3 className="text-lg font-semibold mb-2">Summary</h3>
+                            <p className="text-sm text-muted-foreground">
+                              {newsDetails.text_summary}
+                            </p>
+                          </div>
+                        )}
+                        {Array.isArray(newsDetails?.explanations) && 
+                          newsDetails.explanations.length > 0 && (
+                            <div>
+                              <h3 className="text-lg font-semibold mb-2">Explanations</h3>
+                              {newsDetails.explanations.map((explanation, idx) => (
+                                <div key={idx} className="mb-3 p-3 bg-muted rounded-lg">
+                                  <p className="text-sm">{explanation}</p>
+                                  {newsDetails.references[idx] && (
+                                    <div className="mt-2 flex items-center justify-between">
+                                      <p className="text-xs text-muted-foreground">
+                                        Source: {newsDetails.references[idx].split('/')[2]?.replace('www.', '')}
+                                      </p>
+                                      <a
+                                        href={newsDetails.references[idx]}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-xs text-primary hover:underline"
+                                      >
+                                        Read More
+                                      </a>
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </Card>
+              </div>
             )}
           </div>
         ) : (
@@ -932,24 +1101,6 @@ export default function Dashboard() {
                           />
                         </pattern>
                         <pattern
-                          id="diagonalPattern"
-                          patternUnits="userSpaceOnUse"
-                          width="8"
-                          height="8"
-                        >
-                          <rect width="8" height="8" fill="#e5e7eb" opacity="0.5"/>
-                          <path
-                            d="M-2,2 l4,-4
-                               M0,8 l8,-8
-                               M6,10 l4,-4"
-                            style={{
-                              stroke: "#6b7280",
-                              strokeWidth: 1.5,
-                              opacity: 0.6
-                            }}
-                          />
-                        </pattern>
-                        <pattern
                           id="diagonalPatternGreen"
                           patternUnits="userSpaceOnUse"
                           width="8"
@@ -973,7 +1124,7 @@ export default function Dashboard() {
                         const trend = calculatePriceTrend(chartData, event.start, event.end);
                         
                         let fillColor: string;
-                        if (selectedEvent === event.id) {
+                        if (selectedEventId === event.id) {
                           fillColor = trend === "up" 
                             ? "url(#diagonalPatternGreen)" 
                             : "url(#diagonalPatternRed)";
@@ -993,52 +1144,61 @@ export default function Dashboard() {
                             x1={event.start}
                             x2={event.end}
                             fill={fillColor}
-                            fillOpacity={selectedEvent === event.id ? 1 : 0.5}
-                            onClick={() => {
-                              if (selectedEvent === event.id) {
-                                setSelectedEvent(null);
-                                setNewsPanelActive(false);
-                              } else {
-                                setSelectedEvent(event.id);
-                                setNewsPanelActive(true);
-                                setNewsPanelDateRange(`${event.start} - ${event.end}`);
-                              }
-                            }}
+                            fillOpacity={selectedEventId === event.id ? 1 : 0.3}
+                            onClick={() => handleEventClick(event.id)}
                             onMouseEnter={() => setHoveredEvent(event.id)}
                             onMouseLeave={() => setHoveredEvent(null)}
-                            cursor="pointer"
+                            style={{ cursor: 'pointer' }}
                             label={
-                              hoveredEvent === event.id && selectedEvent !== event.id
+                              hoveredEvent === event.id && selectedEventId !== event.id
                                 ? ({ viewBox }) => {
                                     const { x, y, width, height } = viewBox;
                                     const popupWidth = 100;
                                     const popupHeight = 30;
                                     return (
-                                      <g>
+                                      <g style={{ transform: 'translateZ(1000px)' }}>
+                                        {/* Semi-transparent background overlay */}
                                         <rect
+                                          x={0}
+                                          y={0}
+                                          width="100%"
+                                          height="100%"
+                                          fill="transparent"
+                                          style={{ pointerEvents: 'none' }}
+                                        />
+                                        {/* Popup container */}
+                                        <foreignObject
                                           x={x + width / 2 - popupWidth / 2}
                                           y={y + height * 0.1 - popupHeight / 2}
                                           width={popupWidth}
                                           height={popupHeight}
-                                          rx={5}
-                                          fill="hsl(var(--background))"
-                                          stroke="hsl(var(--border))"
-                                          strokeWidth={1}
-                                          style={{
-                                            filter: "drop-shadow(0 2px 4px rgb(0 0 0 / 0.1))",
-                                            pointerEvents: "none",
+                                          style={{ 
+                                            overflow: 'visible',
+                                            pointerEvents: 'none',
                                           }}
-                                        />
-                                        <text
-                                          x={x + width / 2}
-                                          y={y + height * 0.1}
-                                          textAnchor="middle"
-                                          dominantBaseline="middle"
-                                          className="text-sm font-medium fill-foreground select-none"
-                                          style={{ pointerEvents: "none" }}
                                         >
-                                          Investigate
-                                        </text>
+                                          <div
+                                            style={{
+                                              background: 'hsl(var(--background))',
+                                              border: '1px solid hsl(var(--border))',
+                                              borderRadius: '5px',
+                                              padding: '6px 12px',
+                                              boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                                              position: 'relative',
+                                              zIndex: 50,
+                                              display: 'flex',
+                                              alignItems: 'center',
+                                              justifyContent: 'center',
+                                              pointerEvents: 'none',
+                                            }}
+                                          >
+                                            <span
+                                              className="text-sm font-medium text-foreground select-none"
+                                            >
+                                              Investigate
+                                            </span>
+                                          </div>
+                                        </foreignObject>
                                       </g>
                                     );
                                   }
@@ -1071,7 +1231,7 @@ export default function Dashboard() {
 
                           return (
                             <ReferenceArea
-                              key={interval.id}
+                              key={`${interval.x1}-${interval.x2}`}
                               x1={interval.x1}
                               x2={interval.x2}
                               fill={fillColor}
@@ -1095,31 +1255,49 @@ export default function Dashboard() {
                                       const popupWidth = 100;
                                       const popupHeight = 30;
                                       return (
-                                        <g>
+                                        <g style={{ transform: 'translateZ(1000px)' }}>
+                                          {/* Semi-transparent background overlay */}
                                           <rect
+                                            x={0}
+                                            y={0}
+                                            width="100%"
+                                            height="100%"
+                                            fill="transparent"
+                                            style={{ pointerEvents: 'none' }}
+                                          />
+                                          {/* Popup container */}
+                                          <foreignObject
                                             x={x + width / 2 - popupWidth / 2}
                                             y={y + height * 0.1 - popupHeight / 2}
                                             width={popupWidth}
                                             height={popupHeight}
-                                            rx={5}
-                                            fill="hsl(var(--background))"
-                                            stroke="hsl(var(--border))"
-                                            strokeWidth={1}
-                                            style={{
-                                              filter: "drop-shadow(0 2px 4px rgb(0 0 0 / 0.1))",
-                                              pointerEvents: "none",
+                                            style={{ 
+                                              overflow: 'visible',
+                                              pointerEvents: 'none',
                                             }}
-                                          />
-                                          <text
-                                            x={x + width / 2}
-                                            y={y + height * 0.1}
-                                            textAnchor="middle"
-                                            dominantBaseline="middle"
-                                            className="text-sm font-medium fill-foreground select-none"
-                                            style={{ pointerEvents: "none" }}
                                           >
-                                            Investigate
-                                          </text>
+                                            <div
+                                              style={{
+                                                background: 'hsl(var(--background))',
+                                                border: '1px solid hsl(var(--border))',
+                                                borderRadius: '5px',
+                                                padding: '6px 12px',
+                                                boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                                                position: 'relative',
+                                                zIndex: 50,
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                                pointerEvents: 'none',
+                                              }}
+                                            >
+                                              <span
+                                                className="text-sm font-medium text-foreground select-none"
+                                              >
+                                                Investigate
+                                              </span>
+                                            </div>
+                                          </foreignObject>
                                         </g>
                                       );
                                     }

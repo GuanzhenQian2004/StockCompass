@@ -14,9 +14,12 @@ interface StockData {
   pe: number;
 }
 
+// Define types for our news data (adjust as needed)
 interface NewsData {
-  symbol: string;
-  data: string; // This is JSON string that needs to be parsed
+  explanations: string[];
+  references: string[];
+  reasons: string[];
+  text_summary: string;
 }
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL;
@@ -42,19 +45,51 @@ export async function fetchStockData(
   }
 }
 
-export async function fetchNewsData(symbol: string = 'AAPL'): Promise<NewsData> {
+export async function fetchNewsData(
+  stockname: string = 'AAPL',
+  period: string = 'max',
+  interval: string = '1d',
+  start?: string,
+  end?: string,
+  signal?: AbortSignal
+): Promise<NewsData> {
   try {
-    const response = await fetch(
-      `${API_URL}/newsdata/?symbol=${symbol}`
-    );
+    let url = `${API_URL}/api/news/?stockname=${stockname}&period=${period}&interval=${interval}`;
+    if (start) {
+      url += `&start="${encodeURIComponent(start)}"`;
+    }
+    if (end) {
+      url += `&end="${encodeURIComponent(end)}"`;
+    }
+    
+    const response = await fetch(url, { signal });
     
     if (!response.ok) {
       throw new Error('Network response was not ok');
     }
     
-    return await response.json();
+    const data = await response.json();
+    if (data.complex) {
+      try {
+        let complexString = data.complex;
+        const trimmed = complexString.trim();
+        if (trimmed.startsWith("```")) {
+          complexString = trimmed.replace(/^```(?:json)?\n/, "");
+          complexString = complexString.replace(/\n```$/, "");
+        }
+        const parsedComplex = JSON.parse(complexString);
+        return parsedComplex as NewsData;
+      } catch (parseError) {
+        console.error('Error parsing complex data:', parseError);
+        throw new Error('Invalid news data format');
+      }
+    }
+    throw new Error("Complex news data not found.");
   } catch (error) {
-    console.error('Error fetching news data:', error);
-    throw error;
+    // Don't log AbortError as it's an expected operation
+    if (error instanceof Error && error.name !== 'AbortError') {
+      console.error('Error fetching news data:', error);
+    }
+    throw error; // Re-throw to handle in the component
   }
 } 
