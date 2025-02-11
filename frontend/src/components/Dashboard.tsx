@@ -27,17 +27,29 @@ interface NewsData {
 }
 
 export default function Dashboard() {
-  // Update the formatDate function to handle UTC dates correctly
-  const formatDate = (date: Date | string) => {
-    // Create date object and force UTC handling
-    const d = new Date(date + 'T00:00:00Z');
+  // Update the formatDate function to handle UTC dates correctly and add null check
+  const formatDate = (date: Date | string | null) => {
+    if (!date) return "";
     
-    return d.toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      timeZone: 'UTC'  // Force UTC timezone for display
-    });
+    try {
+      // Create date object and force UTC handling
+      const d = new Date(typeof date === 'string' ? date + 'T00:00:00Z' : date);
+      
+      // Check if date is valid before formatting
+      if (isNaN(d.getTime())) {
+        return "";
+      }
+      
+      return d.toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+        timeZone: 'UTC'  // Force UTC timezone for display
+      });
+    } catch (error) {
+      console.error('Error formatting date:', error);
+      return "";
+    }
   };
 
   // Default to 1Y so we fetch 1-year data on preload
@@ -470,8 +482,8 @@ export default function Dashboard() {
                     </h2>
                     <p className="text-sm font-medium text-muted-foreground">
                       {stockMetadata
-                        ? `${stockMetadata.exchangeName} · ${stockMetadata.currency} · Last Closed: ${stockMetadata.lastClose}`
-                        : "Last Closed: YYYY-MM-DD"
+                        ? `${stockMetadata.exchangeName} · ${stockMetadata.currency} · Last Closed: ${formatDate(stockMetadata.lastClose)}`
+                        : "Last Closed: Loading..."
                       }
                     </p>
                   </div>
@@ -964,8 +976,18 @@ export default function Dashboard() {
                       variant="ghost" 
                       size="icon"
                       onClick={() => {
+                        // Clear all related states when closing the panel
                         setNewsPanelActive(false);
+                        setSelectedEventId(null); // Clear selected event ID
                         setSelectedEvent(null);
+                        setClickedEvent(null);
+                        setNewsDetails(null);
+                        // If there's an active request, abort it
+                        if (activeRequest) {
+                          activeRequest.abort();
+                          setActiveRequest(null);
+                        }
+                        setIsNewsLoading(false);
                       }}
                       className="h-8 w-8 -mt-1"
                     >
@@ -1035,8 +1057,8 @@ export default function Dashboard() {
                 </h2>
                 <p className="text-sm font-medium text-muted-foreground">
                   {stockMetadata
-                    ? `${stockMetadata.exchangeName} · ${stockMetadata.currency} · Last Closed: ${stockMetadata.lastClose}`
-                    : "Last Closed: YYYY-MM-DD"
+                    ? `${stockMetadata.exchangeName} · ${stockMetadata.currency} · Last Closed: ${formatDate(stockMetadata.lastClose)}`
+                    : "Last Closed: Loading..."
                   }
                 </p>
               </div>
