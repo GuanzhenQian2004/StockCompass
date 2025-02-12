@@ -666,7 +666,7 @@ export default function Dashboard() {
                               stroke="hsl(var(--primary))"
                               strokeWidth={2}
                               dot={false}
-                              isAnimationActive={false}
+                              isAnimationActive={true}
                             />
                           </LineChart>
                         </ResponsiveContainer>
@@ -1125,7 +1125,7 @@ export default function Dashboard() {
                           stroke="hsl(var(--primary))"
                           strokeWidth={2}
                           dot={false}
-                          isAnimationActive={false}
+                          isAnimationActive={true}
                         />
                       </LineChart>
                     </ResponsiveContainer>

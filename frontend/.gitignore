@@ -30,13 +30,14 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files
+# Environment files
+# Ignore all sensitive environment files, but allow the sample to be committed.
 .env
+!.env.example
 .env.local
 .env.development
 .env.test
 .env.production
-.env*
 
 # vercel
 .vercel

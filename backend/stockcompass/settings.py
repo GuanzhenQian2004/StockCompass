@@ -130,11 +130,6 @@ STATIC_URL = 'static/'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-STOCK_API_KEYS = os.getenv("STOCK_API_KEYS", "default_key").split(",")
-STOCK_API_BASE_URL = os.getenv("STOCK_API_BASE_URL", )
-STOCK_API_PERIOD = os.getenv("STOCK_API_PERIOD", "1y")
-STOCK_DATA_SOURCE = "YF"
-
 NEWS_API_KEYS = os.getenv("NEWS_API_KEYS", "demo").split(",")
 NEWS_API_BASE_URL = os.getenv("NEWS_API_BASE_URL",)
 NEWS_DATA_SOURCE = "ALPHA"

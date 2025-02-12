@@ -48,6 +48,7 @@ export default function Chart() {
             fill="var(--color-value)"
             fillOpacity={0.4}
             stroke="var(--color-value)"
+            isAnimationActive={true}
           />
         </AreaChart>
       </ResponsiveContainer>
