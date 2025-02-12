@@ -13,6 +13,7 @@ import Image from 'next/image'
 import { LineChart, Line, ResponsiveContainer, CartesianGrid, XAxis, YAxis, Tooltip, ReferenceArea } from "recharts"
 import NewsCard from "./NewsCard"
 import { fetchNewsData } from "@/lib/api"
+import { createPortal } from "react-dom"
 
 // Add this interface near the top of your file, with other types/interfaces
 interface FormattedDataType {
@@ -24,6 +25,26 @@ interface NewsData {
   references: string[];
   reasons: string[];
   text_summary: string;
+}
+
+function InvestigatePopup({ x, y }: { x: number; y: number; }) {
+  return createPortal(
+    <div style={{
+      position: 'absolute',
+      left: x,
+      top: y,
+      transform: 'translate(-50%, -150%)',
+      background: 'hsl(var(--background))',
+      border: '1px solid hsl(var(--border))',
+      borderRadius: '5px',
+      padding: '6px 12px',
+      boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+      zIndex: 1000
+    }}>
+      <span className="text-sm font-medium text-foreground">Investigate</span>
+    </div>,
+    document.body
+  );
 }
 
 export default function Dashboard() {
@@ -60,7 +81,8 @@ export default function Dashboard() {
   const [chartData, setChartData] = useState<any[]>([]);
   const [finData, setFinData] = useState<any[]>([]);
   const [isFetchingMaxData, setIsFetchingMaxData] = useState<boolean>(true);
-  // New state to preserve the initial 1Y data (baseline) and for interval calculations
+  // New: track whether we've finished 1Y data fetch
+  const [isFetchingOneYearData, setIsFetchingOneYearData] = useState<boolean>(true);
   const [oneYearData, setOneYearData] = useState<any[]>([]);
   const [intervalEndDate, setIntervalEndDate] = useState<Date | null>(null);
   const [intervalStartDate, setIntervalStartDate] = useState<Date | null>(null);
@@ -74,6 +96,7 @@ export default function Dashboard() {
   const [showEventHighlights, setShowEventHighlights] = useState<boolean>(false);
   const [selectedEvent, setSelectedEvent] = useState<string | null>(null);
   const [hoveredEvent, setHoveredEvent] = useState<string | null>(null);
+  const [popupPosition, setPopupPosition] = useState<{ x: number, y: number } | null>(null);
 
   // Transform the ranges to include IDs
   const eventHighlights = React.useMemo(() => 
@@ -99,29 +122,28 @@ export default function Dashboard() {
         if (data1y.fin_data) {
           setFinData(data1y.fin_data);
         }
+        // Allow the chart to display now that we have 1Y data
+        setIsFetchingOneYearData(false);
       }
       // 2) Fetch max data
       const responseMax = await fetch(`${apiUrl}/api/stockdata/?stockname=${tickerSymbol}&period=max&interval=1d`);
       const dataMax = await responseMax.json();
       if (dataMax.status_code === 200 && dataMax.time_series) {
-        // Combine 1Y with max data
         const combined = [...(data1y.time_series || []), ...dataMax.time_series];
-        // De-duplicate based on "time"
         const dedupedData = combined.reduce<any[]>((acc, cur) => {
           if (!acc.some((item) => item.time === cur.time)) {
             acc.push(cur);
           }
           return acc;
         }, []);
-        // Sort merged data by time
         dedupedData.sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
         setChartData(dedupedData);
-        // Only set isFetchingMaxData to false after both datasets are loaded and merged
+        // Now that max data is done, enable the function bar
         setIsFetchingMaxData(false);
       }
     } catch (error) {
       console.error(`Failed to fetch data for ${tickerSymbol}:`, error);
-      // In case of error, still set isFetchingMaxData to false to prevent permanent loading state
+      // In case of error, still set isFetchingMaxData to false
       setIsFetchingMaxData(false);
     }
   }
@@ -147,6 +169,7 @@ export default function Dashboard() {
     setSliderValue(100);
     // Reset fetching state to true and clear interval dates
     setIsFetchingMaxData(true);
+    setIsFetchingOneYearData(true);
     setIntervalStartDate(null);
     setIntervalEndDate(null);
 
@@ -244,8 +267,12 @@ export default function Dashboard() {
     try {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-      // Clear the eventRanges so we always start fresh
+      // Clear all selection states when fetching new ranges
       setEventRanges([]);
+      setSelectedEvent(null);
+      setSelectedEventId(null);
+      setHoveredEvent(null);
+      // Don't clear news panel here - we want to keep showing previous news until new selection
 
       // Format data with proper date handling
       const requestBody = {
@@ -340,65 +367,34 @@ export default function Dashboard() {
   const [activeRequest, setActiveRequest] = useState<AbortController | null>(null);
 
   // Update the handleEventClick function
-  const handleEventClick = async (eventId: string) => {
+  const handleEventClick = (eventId: string) => {
+    if (selectedEventId === eventId) {
+      // If the event is already selected, do nothing
+      return;
+    }
     const clickedEvent = eventHighlights.find(event => event.id === eventId);
     if (!clickedEvent) return;
 
-    // If there's an active request, abort it
-    if (activeRequest) {
-      activeRequest.abort();
-    }
-
-    // If clicking the same event that's already selected, close the panel
-    if (selectedEventId === eventId) {
-      setSelectedEventId(null);
-      setNewsPanelActive(false);
-      setNewsDetails(null);
-      setClickedEvent(null);
-      return;
-    }
-
-    // Create new AbortController for this request
-    const controller = new AbortController();
-    setActiveRequest(controller);
-
-    // Update UI state
+    // Clear previous news data and popup when selecting a new event
+    setNewsDetails(null);
+    setClickedEvent(clickedEvent);
     setSelectedEventId(eventId);
-    setClickedEvent({
-      start: clickedEvent.start,
-      end: clickedEvent.end
-    });
-    setIsNewsLoading(true);
     setNewsPanelActive(true);
-    setNewsDetails(null); // Clear previous news data
+    setIsNewsLoading(true);
+    setPopupPosition(null);
+    setHoveredEvent(null);
 
-    try {
-      const fetchedNews = await fetchNewsData(
-        ticker,
-        "max",
-        "1d",
-        clickedEvent.start,
-        clickedEvent.end,
-        controller.signal
-      );
-      
-      // Only update state if this request wasn't aborted
-      if (!controller.signal.aborted) {
+    // Fetch news data for the selected event
+    fetchNewsData(ticker, "max", "1d", clickedEvent.start, clickedEvent.end)
+      .then(fetchedNews => {
         setNewsDetails(fetchedNews);
-      }
-    } catch (err: unknown) {
-      // Only handle non-abort errors
-      if (err instanceof Error && err.name !== 'AbortError') {
+        setIsNewsLoading(false);
+      })
+      .catch(err => {
         console.error("Failed to fetch news data:", err);
         setNewsDetails(null);
-      }
-      // Silently ignore AbortError as it's expected behavior
-    } finally {
-      if (!controller.signal.aborted) {
         setIsNewsLoading(false);
-        setActiveRequest(null);
-      }
-    }
+      });
   };
 
   // Memoize mapped news items only if newsDetails.explanations is an array
@@ -422,7 +418,7 @@ export default function Dashboard() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className="min-h-screen bg-background flex flex-col h-screen">
       <header className="border-b flex-none">
         <div className="flex h-16 items-center justify-between px-8">
           <div className="flex items-center gap-6">
@@ -470,7 +466,7 @@ export default function Dashboard() {
         </div>
       </header>
 
-      <main className="flex-1 flex p-8 gap-4 h-[calc(100vh-5rem)]">
+      <main className="flex-1 flex p-8 gap-4 h-[calc(100vh-4rem)] overflow-hidden">
         {selectedInterval ? (
           <div className="flex flex-1 gap-5 h-full">
             <div className={`transition-all duration-200 ${newsPanelActive ? 'flex-1' : 'w-full'}`}>
@@ -516,281 +512,165 @@ export default function Dashboard() {
                 </div>
 
                 <div className="flex-1 flex flex-col min-h-0 border-b">
-                  <div className="p-6 flex flex-col flex-1 min-h-0">
+                  <div className="p-6 flex flex-col flex-1 min-h-0 h-full">
                     <div className="flex-1 min-h-0">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <LineChart
-                          data={displayChartData}
-                          margin={{
-                            top: 10,
-                            right: 10,
-                            left: 10,
-                            bottom: 10,
-                          }}
-                        >
-                          <defs>
-                            <pattern
-                              id="diagonalPatternRed"
-                              patternUnits="userSpaceOnUse"
-                              width="8"
-                              height="8"
-                            >
-                              <rect width="8" height="8" fill="#fca5a5" opacity="0.2" />
-                              <path
-                                d="M-2,2 l4,-4
-                                   M0,8 l8,-8
-                                   M6,10 l4,-4"
-                                style={{
-                                  stroke: "#dc2626",
-                                  strokeWidth: 1.5,
-                                  opacity: 1
-                                }}
-                              />
-                            </pattern>
-                            <pattern
-                              id="diagonalPatternGreen"
-                              patternUnits="userSpaceOnUse"
-                              width="8"
-                              height="8"
-                            >
-                              <rect width="8" height="8" fill="#86efac" opacity="0.2" />
-                              <path
-                                d="M-2,2 l4,-4
-                                   M0,8 l8,-8
-                                   M6,10 l4,-4"
-                                style={{
-                                  stroke: "#16a34a",
-                                  strokeWidth: 1.5,
-                                  opacity: 1
-                                }}
-                              />
-                            </pattern>
-                          </defs>
-                          <CartesianGrid vertical={false} strokeDasharray="3 3" />
-                          {showEventHighlights && eventHighlights.map((event) => {
-                            const trend = calculatePriceTrend(chartData, event.start, event.end);
-                            
-                            let fillColor: string;
-                            if (selectedEventId === event.id) {
-                              fillColor = trend === "up" 
-                                ? "url(#diagonalPatternGreen)" 
-                                : "url(#diagonalPatternRed)";
-                            } else if (hoveredEvent === event.id) {
-                              fillColor = trend === "up" 
-                                ? "#22c55e"  // Tailwind green-500
-                                : "#ef4444"; // Tailwind red-500
-                            } else {
-                              fillColor = trend === "up" 
-                                ? "#86efac"  // Tailwind green-300
-                                : "#fca5a5"; // Tailwind red-300
-                            }
-
-                            return (
-                              <ReferenceArea
-                                key={event.id}
-                                x1={event.start}
-                                x2={event.end}
-                                fill={fillColor}
-                                fillOpacity={selectedEventId === event.id ? 1 : 0.3}
-                                onClick={() => handleEventClick(event.id)}
-                                onMouseEnter={() => setHoveredEvent(event.id)}
-                                onMouseLeave={() => setHoveredEvent(null)}
-                                style={{ cursor: 'pointer' }}
-                                label={
-                                  hoveredEvent === event.id && selectedEventId !== event.id
-                                    ? ({ viewBox }) => {
-                                        const { x, y, width, height } = viewBox;
-                                        const popupWidth = 100;
-                                        const popupHeight = 30;
-                                        return (
-                                          <g style={{ transform: 'translateZ(1000px)' }}>
-                                            {/* Semi-transparent background overlay */}
-                                            <rect
-                                              x={0}
-                                              y={0}
-                                              width="100%"
-                                              height="100%"
-                                              fill="transparent"
-                                              style={{ pointerEvents: 'none' }}
-                                            />
-                                            {/* Popup container */}
-                                            <foreignObject
-                                              x={x + width / 2 - popupWidth / 2}
-                                              y={y + height * 0.1 - popupHeight / 2}
-                                              width={popupWidth}
-                                              height={popupHeight}
-                                              style={{ 
-                                                overflow: 'visible',
-                                                pointerEvents: 'none',
-                                              }}
-                                            >
-                                              <div
-                                                style={{
-                                                  background: 'hsl(var(--background))',
-                                                  border: '1px solid hsl(var(--border))',
-                                                  borderRadius: '5px',
-                                                  padding: '6px 12px',
-                                                  boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-                                                  position: 'relative',
-                                                  zIndex: 50,
-                                                  display: 'flex',
-                                                  alignItems: 'center',
-                                                  justifyContent: 'center',
-                                                  pointerEvents: 'none',
-                                                }}
-                                              >
-                                                <span
-                                                  className="text-sm font-medium text-foreground select-none"
-                                                >
-                                                  Investigate
-                                                </span>
-                                              </div>
-                                            </foreignObject>
-                                          </g>
-                                        );
-                                      }
-                                    : undefined
-                                }
-                              />
-                            );
-                          })}
-                          {intervals.map((interval) => {
-                            return (() => {
-                              // Determine the starting and ending values for the interval.
-                              const startDatum = displayChartData.find(d => d.time === interval.x1);
-                              const endDatum = displayChartData.find(d => d.time === interval.x2);
-                              const trendColor = (startDatum && endDatum)
-                                ? (endDatum.close_price - startDatum.close_price >= 0 ? "green" : "red")
-                                : "gray";
-
-                              const isSelected = selectedInterval === interval.id;
-                              const isHovered = hoveredInterval === interval.id;
-                              let fillColor: string;
-                              if (isSelected) {
-                                fillColor = trendColor === "green"
-                                  ? "url(#diagonalPatternGreen)"
-                                  : "url(#diagonalPatternRed)";
-                              } else if (isHovered) {
-                                fillColor = trendColor === "green" ? "#22c55e" : "#ef4444";  // Tailwind 500 variants
-                              } else {
-                                fillColor = trendColor === "green" ? "#86efac" : "#fca5a5";  // Tailwind 300 variants
-                              }
-
+                      <div className="w-full h-full">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <LineChart
+                            data={displayChartData}
+                            margin={{
+                              top: 10,
+                              right: 10,
+                              left: 10,
+                              bottom: 10,
+                            }}
+                          >
+                            <defs>
+                              <pattern
+                                id="diagonalPatternRed"
+                                patternUnits="userSpaceOnUse"
+                                width="8"
+                                height="8"
+                              >
+                                <rect width="8" height="8" fill="#ef4444" opacity="0.2" />
+                                <path
+                                  d="M-2,2 l4,-4
+                                     M0,8 l8,-8
+                                     M6,10 l4,-4"
+                                  style={{
+                                    stroke: "#ef4444",
+                                    strokeWidth: 1.5,
+                                    opacity: 0.9
+                                  }}
+                                />
+                              </pattern>
+                              <pattern
+                                id="diagonalPatternGreen"
+                                patternUnits="userSpaceOnUse"
+                                width="8"
+                                height="8"
+                              >
+                                <rect width="8" height="8" fill="#22c55e" opacity="0.2" />
+                                <path
+                                  d="M-2,2 l4,-4
+                                     M0,8 l8,-8
+                                     M6,10 l4,-4"
+                                  style={{
+                                    stroke: "#22c55e",
+                                    strokeWidth: 1.5,
+                                    opacity: 0.9
+                                  }}
+                                />
+                              </pattern>
+                            </defs>
+                            <CartesianGrid vertical={false} strokeDasharray="3 3" />
+                            {showEventHighlights && eventHighlights.map((event) => {
+                              const isSelected = event.id === selectedEventId;
+                              const isHovered = event.id === hoveredEvent;
+                              
                               return (
                                 <ReferenceArea
-                                  key={`${interval.x1}-${interval.x2}`}
-                                  x1={interval.x1}
-                                  x2={interval.x2}
-                                  fill={fillColor}
-                                  fillOpacity={isSelected ? 1 : 0.5}
-                                  onClick={() => {
-                                    if (selectedInterval === interval.id) {
-                                      setSelectedInterval(null);
-                                    } else {
-                                      setSelectedInterval(interval.id);
-                                    }
-                                  }}
-                                  onMouseEnter={() => setHoveredInterval(interval.id)}
-                                  onMouseLeave={() => setHoveredInterval(null)}
-                                  className="cursor-pointer transition-colors duration-200 hover:opacity-90"
-                                  role="button"
-                                  aria-label={`Toggle highlight region ${interval.label}`}
-                                  label={
-                                    isHovered && !isSelected
-                                      ? ({ viewBox }) => {
-                                          const { x, y, width, height } = viewBox;
-                                          const popupWidth = 100;
-                                          const popupHeight = 30;
-                                          return (
-                                            <g style={{ transform: 'translateZ(1000px)' }}>
-                                              {/* Semi-transparent background overlay */}
-                                              <rect
-                                                x={0}
-                                                y={0}
-                                                width="100%"
-                                                height="100%"
-                                                fill="transparent"
-                                                style={{ pointerEvents: 'none' }}
-                                              />
-                                              {/* Popup container */}
-                                              <foreignObject
-                                                x={x + width / 2 - popupWidth / 2}
-                                                y={y + height * 0.1 - popupHeight / 2}
-                                                width={popupWidth}
-                                                height={popupHeight}
-                                                style={{ 
-                                                  overflow: 'visible',
-                                                  pointerEvents: 'none',
-                                                }}
-                                              >
-                                                <div
-                                                  style={{
-                                                    background: 'hsl(var(--background))',
-                                                    border: '1px solid hsl(var(--border))',
-                                                    borderRadius: '5px',
-                                                    padding: '6px 12px',
-                                                    boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-                                                    position: 'relative',
-                                                    zIndex: 50,
-                                                    display: 'flex',
-                                                    alignItems: 'center',
-                                                    justifyContent: 'center',
-                                                    pointerEvents: 'none',
-                                                  }}
-                                                >
-                                                  <span
-                                                    className="text-sm font-medium text-foreground select-none"
-                                                  >
-                                                    Investigate
-                                                  </span>
-                                                </div>
-                                              </foreignObject>
-                                            </g>
-                                          );
-                                        }
-                                      : undefined
+                                  key={event.id}
+                                  x1={event.start}
+                                  x2={event.end}
+                                  fill={isSelected ? 
+                                    `url(#${calculatePriceTrend(displayChartData, event.start, event.end) === "up" ? "diagonalPatternGreen" : "diagonalPatternRed"})` : 
+                                    (calculatePriceTrend(displayChartData, event.start, event.end) === "up" ? "#22c55e66" : "#ef444466")
                                   }
+                                  fillOpacity={isSelected ? 1 : (isHovered ? 0.6 : 0.4)}
+                                  onClick={() => { if (!isSelected) handleEventClick(event.id); }}
+                                  onMouseEnter={(e) => { if (!isSelected) { setHoveredEvent(event.id); setPopupPosition({ x: e.pageX, y: e.pageY }); }}}
+                                  onMouseMove={(e) => { if (!isSelected) setPopupPosition({ x: e.pageX, y: e.pageY }); }}
+                                  onMouseLeave={() => { if (!isSelected) { setHoveredEvent(null); setPopupPosition(null); }}}
+                                  style={{ cursor: isSelected ? 'default' : 'pointer' }}
                                 />
                               );
-                            })();
-                          })}
-                          <XAxis
-                            dataKey="time"
-                            tickLine={false}
-                            axisLine={false}
-                            tickMargin={8}
-                          />
-                          <YAxis
-                            tickLine={false}
-                            axisLine={false}
-                            tickMargin={8}
-                          />
-                          <Tooltip
-                            contentStyle={{
-                              backgroundColor: "hsl(var(--popover))",
-                              border: "1px solid hsl(var(--border))",
-                              borderRadius: "var(--radius)",
-                            }}
-                            labelStyle={{
-                              color: "hsl(var(--muted-foreground))",
-                              fontSize: "14px",
-                              marginBottom: "4px",
-                            }}
-                            itemStyle={{
-                              color: "hsl(var(--foreground))",
-                              fontSize: "14px",
-                            }}
-                            formatter={(value) => [`$${value}`, "Price"]}
-                          />
-                          <Line
-                            type="monotone"
-                            dataKey="close_price"
-                            stroke="hsl(var(--primary))"
-                            strokeWidth={2}
-                            dot={false}
-                          />
-                        </LineChart>
-                      </ResponsiveContainer>
+                            })}
+                            {intervals.map((interval) => {
+                              return (() => {
+                                // Determine the starting and ending values for the interval.
+                                const startDatum = displayChartData.find(d => d.time === interval.x1);
+                                const endDatum = displayChartData.find(d => d.time === interval.x2);
+                                const trendColor = (startDatum && endDatum)
+                                  ? (endDatum.close_price - startDatum.close_price >= 0 ? "green" : "red")
+                                  : "gray";
+
+                                const isSelected = selectedInterval === interval.id;
+                                const isHovered = hoveredInterval === interval.id;
+                                let fillColor: string;
+                                if (isSelected) {
+                                  fillColor = trendColor === "green"
+                                    ? "url(#diagonalPatternGreen)"
+                                    : "url(#diagonalPatternRed)";
+                                } else if (isHovered) {
+                                  fillColor = trendColor === "green" ? "#22c55e" : "#ef4444";  // Tailwind 500 variants
+                                } else {
+                                  fillColor = trendColor === "green" ? "#22c55e66" : "#ef444466";  // 0.4 opacity
+                                }
+
+                                return (
+                                  <ReferenceArea
+                                    key={`${interval.x1}-${interval.x2}`}
+                                    x1={interval.x1}
+                                    x2={interval.x2}
+                                    fill={fillColor}
+                                    fillOpacity={isSelected ? 1 : 0.5}
+                                    onClick={() => {
+                                      if (selectedInterval === interval.id) {
+                                        setSelectedInterval(null);
+                                      } else {
+                                        setSelectedInterval(interval.id);
+                                      }
+                                    }}
+                                    onMouseEnter={(e) => { setHoveredInterval(interval.id); setPopupPosition({ x: e.pageX, y: e.pageY }); }}
+                                    onMouseMove={(e) => { setPopupPosition({ x: e.pageX, y: e.pageY }); }}
+                                    onMouseLeave={() => { setHoveredInterval(null); setPopupPosition(null); }}
+                                    className="cursor-pointer transition-colors duration-200 hover:opacity-90"
+                                    role="button"
+                                    aria-label={`Toggle highlight region ${interval.label}`}
+                                  />
+                                );
+                              })();
+                            })}
+                            <XAxis
+                              dataKey="time"
+                              tickLine={false}
+                              axisLine={false}
+                              tickMargin={8}
+                            />
+                            <YAxis
+                              tickLine={false}
+                              axisLine={false}
+                              tickMargin={8}
+                            />
+                            <Tooltip
+                              contentStyle={{
+                                backgroundColor: "hsl(var(--popover))",
+                                border: "1px solid hsl(var(--border))",
+                                borderRadius: "var(--radius)",
+                              }}
+                              labelStyle={{
+                                color: "hsl(var(--muted-foreground))",
+                                fontSize: "14px",
+                                marginBottom: "4px",
+                              }}
+                              itemStyle={{
+                                color: "hsl(var(--foreground))",
+                                fontSize: "14px",
+                              }}
+                              formatter={(value) => [`$${value}`, "Price"]}
+                            />
+                            <Line
+                              type="monotone"
+                              dataKey="close_price"
+                              stroke="hsl(var(--primary))"
+                              strokeWidth={2}
+                              dot={false}
+                              isAnimationActive={false}
+                            />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      </div>
                     </div>
 
                     <div className="mt-6">
@@ -1091,281 +971,165 @@ export default function Dashboard() {
             </div>
 
             <div className="flex-1 flex flex-col min-h-0 border-b">
-              <div className="p-6 flex flex-col flex-1 min-h-0">
+              <div className="p-6 flex flex-col flex-1 min-h-0 h-full">
                 <div className="flex-1 min-h-0">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart
-                      data={displayChartData}
-                      margin={{
-                        top: 10,
-                        right: 10,
-                        left: 10,
-                        bottom: 10,
-                      }}
-                    >
-                      <defs>
-                        <pattern
-                          id="diagonalPatternRed"
-                          patternUnits="userSpaceOnUse"
-                          width="8"
-                          height="8"
-                        >
-                          <rect width="8" height="8" fill="#fca5a5" opacity="0.2" />
-                          <path
-                            d="M-2,2 l4,-4
-                               M0,8 l8,-8
-                               M6,10 l4,-4"
-                            style={{
-                              stroke: "#dc2626",
-                              strokeWidth: 1.5,
-                              opacity: 1
-                            }}
-                          />
-                        </pattern>
-                        <pattern
-                          id="diagonalPatternGreen"
-                          patternUnits="userSpaceOnUse"
-                          width="8"
-                          height="8"
-                        >
-                          <rect width="8" height="8" fill="#86efac" opacity="0.2" />
-                          <path
-                            d="M-2,2 l4,-4
-                               M0,8 l8,-8
-                               M6,10 l4,-4"
-                            style={{
-                              stroke: "#16a34a",
-                              strokeWidth: 1.5,
-                              opacity: 1
-                            }}
-                          />
-                        </pattern>
-                      </defs>
-                      <CartesianGrid vertical={false} strokeDasharray="3 3" />
-                      {showEventHighlights && eventHighlights.map((event) => {
-                        const trend = calculatePriceTrend(chartData, event.start, event.end);
-                        
-                        let fillColor: string;
-                        if (selectedEventId === event.id) {
-                          fillColor = trend === "up" 
-                            ? "url(#diagonalPatternGreen)" 
-                            : "url(#diagonalPatternRed)";
-                        } else if (hoveredEvent === event.id) {
-                          fillColor = trend === "up" 
-                            ? "#22c55e"  // Tailwind green-500
-                            : "#ef4444"; // Tailwind red-500
-                        } else {
-                          fillColor = trend === "up" 
-                            ? "#86efac"  // Tailwind green-300
-                            : "#fca5a5"; // Tailwind red-300
-                        }
-
-                        return (
-                          <ReferenceArea
-                            key={event.id}
-                            x1={event.start}
-                            x2={event.end}
-                            fill={fillColor}
-                            fillOpacity={selectedEventId === event.id ? 1 : 0.3}
-                            onClick={() => handleEventClick(event.id)}
-                            onMouseEnter={() => setHoveredEvent(event.id)}
-                            onMouseLeave={() => setHoveredEvent(null)}
-                            style={{ cursor: 'pointer' }}
-                            label={
-                              hoveredEvent === event.id && selectedEventId !== event.id
-                                ? ({ viewBox }) => {
-                                    const { x, y, width, height } = viewBox;
-                                    const popupWidth = 100;
-                                    const popupHeight = 30;
-                                    return (
-                                      <g style={{ transform: 'translateZ(1000px)' }}>
-                                        {/* Semi-transparent background overlay */}
-                                        <rect
-                                          x={0}
-                                          y={0}
-                                          width="100%"
-                                          height="100%"
-                                          fill="transparent"
-                                          style={{ pointerEvents: 'none' }}
-                                        />
-                                        {/* Popup container */}
-                                        <foreignObject
-                                          x={x + width / 2 - popupWidth / 2}
-                                          y={y + height * 0.1 - popupHeight / 2}
-                                          width={popupWidth}
-                                          height={popupHeight}
-                                          style={{ 
-                                            overflow: 'visible',
-                                            pointerEvents: 'none',
-                                          }}
-                                        >
-                                          <div
-                                            style={{
-                                              background: 'hsl(var(--background))',
-                                              border: '1px solid hsl(var(--border))',
-                                              borderRadius: '5px',
-                                              padding: '6px 12px',
-                                              boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-                                              position: 'relative',
-                                              zIndex: 50,
-                                              display: 'flex',
-                                              alignItems: 'center',
-                                              justifyContent: 'center',
-                                              pointerEvents: 'none',
-                                            }}
-                                          >
-                                            <span
-                                              className="text-sm font-medium text-foreground select-none"
-                                            >
-                                              Investigate
-                                            </span>
-                                          </div>
-                                        </foreignObject>
-                                      </g>
-                                    );
-                                  }
-                                : undefined
-                            }
-                          />
-                        );
-                      })}
-                      {intervals.map((interval) => {
-                        return (() => {
-                          // Determine the starting and ending values for the interval.
-                          const startDatum = displayChartData.find(d => d.time === interval.x1);
-                          const endDatum = displayChartData.find(d => d.time === interval.x2);
-                          const trendColor = (startDatum && endDatum)
-                            ? (endDatum.close_price - startDatum.close_price >= 0 ? "green" : "red")
-                            : "gray";
-
-                          const isSelected = selectedInterval === interval.id;
-                          const isHovered = hoveredInterval === interval.id;
-                          let fillColor: string;
-                          if (isSelected) {
-                            fillColor = trendColor === "green"
-                              ? "url(#diagonalPatternGreen)"
-                              : "url(#diagonalPatternRed)";
-                          } else if (isHovered) {
-                            fillColor = trendColor === "green" ? "#22c55e" : "#ef4444";  // Tailwind 500 variants
-                          } else {
-                            fillColor = trendColor === "green" ? "#86efac" : "#fca5a5";  // Tailwind 300 variants
-                          }
-
+                  <div className="w-full h-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart
+                        data={displayChartData}
+                        margin={{
+                          top: 10,
+                          right: 10,
+                          left: 10,
+                          bottom: 10,
+                        }}
+                      >
+                        <defs>
+                          <pattern
+                            id="diagonalPatternRed"
+                            patternUnits="userSpaceOnUse"
+                            width="8"
+                            height="8"
+                          >
+                            <rect width="8" height="8" fill="#ef4444" opacity="0.2" />
+                            <path
+                              d="M-2,2 l4,-4
+                                 M0,8 l8,-8
+                                 M6,10 l4,-4"
+                              style={{
+                                stroke: "#ef4444",
+                                strokeWidth: 1.5,
+                                opacity: 0.9
+                              }}
+                            />
+                          </pattern>
+                          <pattern
+                            id="diagonalPatternGreen"
+                            patternUnits="userSpaceOnUse"
+                            width="8"
+                            height="8"
+                          >
+                            <rect width="8" height="8" fill="#22c55e" opacity="0.2" />
+                            <path
+                              d="M-2,2 l4,-4
+                                 M0,8 l8,-8
+                                 M6,10 l4,-4"
+                              style={{
+                                stroke: "#22c55e",
+                                strokeWidth: 1.5,
+                                opacity: 0.9
+                              }}
+                            />
+                          </pattern>
+                        </defs>
+                        <CartesianGrid vertical={false} strokeDasharray="3 3" />
+                        {showEventHighlights && eventHighlights.map((event) => {
+                          const isSelected = event.id === selectedEventId;
+                          const isHovered = event.id === hoveredEvent;
+                          
                           return (
                             <ReferenceArea
-                              key={`${interval.x1}-${interval.x2}`}
-                              x1={interval.x1}
-                              x2={interval.x2}
-                              fill={fillColor}
-                              fillOpacity={isSelected ? 1 : 0.5}
-                              onClick={() => {
-                                if (selectedInterval === interval.id) {
-                                  setSelectedInterval(null);
-                                } else {
-                                  setSelectedInterval(interval.id);
-                                }
-                              }}
-                              onMouseEnter={() => setHoveredInterval(interval.id)}
-                              onMouseLeave={() => setHoveredInterval(null)}
-                              className="cursor-pointer transition-colors duration-200 hover:opacity-90"
-                              role="button"
-                              aria-label={`Toggle highlight region ${interval.label}`}
-                              label={
-                                isHovered && !isSelected
-                                  ? ({ viewBox }) => {
-                                      const { x, y, width, height } = viewBox;
-                                      const popupWidth = 100;
-                                      const popupHeight = 30;
-                                      return (
-                                        <g style={{ transform: 'translateZ(1000px)' }}>
-                                          {/* Semi-transparent background overlay */}
-                                          <rect
-                                            x={0}
-                                            y={0}
-                                            width="100%"
-                                            height="100%"
-                                            fill="transparent"
-                                            style={{ pointerEvents: 'none' }}
-                                          />
-                                          {/* Popup container */}
-                                          <foreignObject
-                                            x={x + width / 2 - popupWidth / 2}
-                                            y={y + height * 0.1 - popupHeight / 2}
-                                            width={popupWidth}
-                                            height={popupHeight}
-                                            style={{ 
-                                              overflow: 'visible',
-                                              pointerEvents: 'none',
-                                            }}
-                                          >
-                                            <div
-                                              style={{
-                                                background: 'hsl(var(--background))',
-                                                border: '1px solid hsl(var(--border))',
-                                                borderRadius: '5px',
-                                                padding: '6px 12px',
-                                                boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-                                                position: 'relative',
-                                                zIndex: 50,
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                justifyContent: 'center',
-                                                pointerEvents: 'none',
-                                              }}
-                                            >
-                                              <span
-                                                className="text-sm font-medium text-foreground select-none"
-                                              >
-                                                Investigate
-                                              </span>
-                                            </div>
-                                          </foreignObject>
-                                        </g>
-                                      );
-                                    }
-                                  : undefined
+                              key={event.id}
+                              x1={event.start}
+                              x2={event.end}
+                              fill={isSelected ? 
+                                `url(#${calculatePriceTrend(displayChartData, event.start, event.end) === "up" ? "diagonalPatternGreen" : "diagonalPatternRed"})` : 
+                                (calculatePriceTrend(displayChartData, event.start, event.end) === "up" ? "#22c55e66" : "#ef444466")
                               }
+                              fillOpacity={isSelected ? 1 : (isHovered ? 0.6 : 0.4)}
+                              onClick={() => { if (!isSelected) handleEventClick(event.id); }}
+                              onMouseEnter={(e) => { if (!isSelected) { setHoveredEvent(event.id); setPopupPosition({ x: e.pageX, y: e.pageY }); }}}
+                              onMouseMove={(e) => { if (!isSelected) setPopupPosition({ x: e.pageX, y: e.pageY }); }}
+                              onMouseLeave={() => { if (!isSelected) { setHoveredEvent(null); setPopupPosition(null); }}}
+                              style={{ cursor: isSelected ? 'default' : 'pointer' }}
                             />
                           );
-                        })();
-                      })}
-                      <XAxis
-                        dataKey="time"
-                        tickLine={false}
-                        axisLine={false}
-                        tickMargin={8}
-                      />
-                      <YAxis
-                        tickLine={false}
-                        axisLine={false}
-                        tickMargin={8}
-                      />
-                      <Tooltip
-                        contentStyle={{
-                          backgroundColor: "hsl(var(--popover))",
-                          border: "1px solid hsl(var(--border))",
-                          borderRadius: "var(--radius)",
-                        }}
-                        labelStyle={{
-                          color: "hsl(var(--muted-foreground))",
-                          fontSize: "14px",
-                          marginBottom: "4px",
-                        }}
-                        itemStyle={{
-                          color: "hsl(var(--foreground))",
-                          fontSize: "14px",
-                        }}
-                        formatter={(value) => [`$${value}`, "Price"]}
-                      />
-                      <Line
-                        type="monotone"
-                        dataKey="close_price"
-                        stroke="hsl(var(--primary))"
-                        strokeWidth={2}
-                        dot={false}
-                      />
-                    </LineChart>
-                  </ResponsiveContainer>
+                        })}
+                        {intervals.map((interval) => {
+                          return (() => {
+                            // Determine the starting and ending values for the interval.
+                            const startDatum = displayChartData.find(d => d.time === interval.x1);
+                            const endDatum = displayChartData.find(d => d.time === interval.x2);
+                            const trendColor = (startDatum && endDatum)
+                              ? (endDatum.close_price - startDatum.close_price >= 0 ? "green" : "red")
+                              : "gray";
+
+                            const isSelected = selectedInterval === interval.id;
+                            const isHovered = hoveredInterval === interval.id;
+                            let fillColor: string;
+                            if (isSelected) {
+                              fillColor = trendColor === "green"
+                                ? "url(#diagonalPatternGreen)"
+                                : "url(#diagonalPatternRed)";
+                            } else if (isHovered) {
+                              fillColor = trendColor === "green" ? "#22c55e" : "#ef4444";  // Tailwind 500 variants
+                            } else {
+                              fillColor = trendColor === "green" ? "#22c55e66" : "#ef444466";  // 0.4 opacity
+                            }
+
+                            return (
+                              <ReferenceArea
+                                key={`${interval.x1}-${interval.x2}`}
+                                x1={interval.x1}
+                                x2={interval.x2}
+                                fill={fillColor}
+                                fillOpacity={isSelected ? 1 : 0.5}
+                                onClick={() => {
+                                  if (selectedInterval === interval.id) {
+                                    setSelectedInterval(null);
+                                  } else {
+                                    setSelectedInterval(interval.id);
+                                  }
+                                }}
+                                onMouseEnter={(e) => { setHoveredInterval(interval.id); setPopupPosition({ x: e.pageX, y: e.pageY }); }}
+                                onMouseMove={(e) => { setPopupPosition({ x: e.pageX, y: e.pageY }); }}
+                                onMouseLeave={() => { setHoveredInterval(null); setPopupPosition(null); }}
+                                className="cursor-pointer transition-colors duration-200 hover:opacity-90"
+                                role="button"
+                                aria-label={`Toggle highlight region ${interval.label}`}
+                              />
+                            );
+                          })();
+                        })}
+                        <XAxis
+                          dataKey="time"
+                          tickLine={false}
+                          axisLine={false}
+                          tickMargin={8}
+                        />
+                        <YAxis
+                          tickLine={false}
+                          axisLine={false}
+                          tickMargin={8}
+                        />
+                        <Tooltip
+                          contentStyle={{
+                            backgroundColor: "hsl(var(--popover))",
+                            border: "1px solid hsl(var(--border))",
+                            borderRadius: "var(--radius)",
+                          }}
+                          labelStyle={{
+                            color: "hsl(var(--muted-foreground))",
+                            fontSize: "14px",
+                            marginBottom: "4px",
+                          }}
+                          itemStyle={{
+                            color: "hsl(var(--foreground))",
+                            fontSize: "14px",
+                          }}
+                          formatter={(value) => [`$${value}`, "Price"]}
+                        />
+                        <Line
+                          type="monotone"
+                          dataKey="close_price"
+                          stroke="hsl(var(--primary))"
+                          strokeWidth={2}
+                          dot={false}
+                          isAnimationActive={false}
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
                 </div>
 
                 <div className="mt-6">
@@ -1536,6 +1300,9 @@ export default function Dashboard() {
           </Card>
         )}
       </main>
+      {popupPosition && (hoveredEvent || hoveredInterval) && (
+        <InvestigatePopup x={popupPosition.x} y={popupPosition.y} />
+      )}
     </div>
   )
 }

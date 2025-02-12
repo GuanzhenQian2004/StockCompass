@@ -14,7 +14,7 @@ def stock_data_api(request):
 
 async def async_stock_data_api(request):
     try:
-        # Get parameters from the request (with default values if not provided)
+        # Get parameters with defaults if not provided
         stock_name = request.query_params.get('stockname', 'AAPL')
         period = request.query_params.get('period', '1d')
         interval = request.query_params.get('interval', '60m')
