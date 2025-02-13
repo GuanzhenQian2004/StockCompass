@@ -3,7 +3,6 @@ import json
 import yfinance as yf
 from argparse import ArgumentParser
 import requests
-from pydantic import BaseModel
 from openai import OpenAI
 
 def send_post_request(url, payload, headers):
@@ -12,12 +11,6 @@ def send_post_request(url, payload, headers):
         return response.json()
     except json.decoder.JSONDecodeError:
         return {"error": "Invalid JSON", "status_code": response.status_code, "response_text": response.text}
-
-class AnswerFormat(BaseModel):
-    explanations: list
-    reasons: list
-    references: list
-    text_summary: str
 
 def api_data_request(api_key, stock, start, end):
     url = "https://api.perplexity.ai/chat/completions"
@@ -124,3 +117,10 @@ if __name__ == "__main__":
 
 
 # python message.py --api_key_1 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 --api_key_2 sk-d7223df849cf4c1d8d97c7178c04e932 --stock AAPL --start "2022-01-01" --end "2022-01-31"
+
+def validate_news_item(data):
+    required_fields = ['title', 'url']
+    for field in required_fields:
+        if field not in data:
+            raise ValueError(f"Missing required field: {field}")
+    return data

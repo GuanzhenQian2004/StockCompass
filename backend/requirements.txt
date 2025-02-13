@@ -37,3 +37,4 @@ tzdata==2024.2
 urllib3==2.3.0
 webencodings==0.5.1
 yfinance==0.2.52
+openai==1.62.0
