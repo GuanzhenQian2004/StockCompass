@@ -11,20 +11,44 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { Slider } from "@/components/ui/slider"
 import Image from 'next/image'
 import { LineChart, Line, ResponsiveContainer, CartesianGrid, XAxis, YAxis, Tooltip, ReferenceArea } from "recharts"
-import NewsCard from "./NewsCard"
 import { fetchNewsData } from "@/lib/api"
 import { createPortal } from "react-dom"
-
-// Add this interface near the top of your file, with other types/interfaces
-interface FormattedDataType {
-  [key: string]: number[];
-}
 
 interface NewsData {
   explanations: string[];
   references: string[];
   reasons: string[];
   text_summary: string;
+}
+
+interface StockMetadata {
+  yearly_pct_change: number;
+  longName: string;
+  shortName?: string;
+  sector?: string;
+  industry?: string;
+  marketCap?: number;
+  currency: string;
+  exchangeName: string;
+  lastClose: string | Date;
+  montly_pct_change: number;
+}
+
+interface ChartDataPoint {
+  time: string;
+  close_price: number;
+  volume: number;
+  earnings?: number;
+  // Add other properties as needed
+}
+
+// 1. Create an interface for news items
+interface NewsItem {
+  title: string;
+  description: string;
+  url: string;
+  date: string;
+  // Add other properties as needed
 }
 
 function InvestigatePopup({ x, y }: { x: number; y: number; }) {
@@ -76,25 +100,16 @@ export default function Dashboard() {
   // Default to 1Y so we fetch 1-year data on preload
   const [selectedInterval, setSelectedInterval] = useState<string | null>("1Y");
   const [hoveredInterval, setHoveredInterval] = useState<string | null>(null);
-  const [stockMetadata, setStockMetadata] = useState<any>(null);
+  const [stockMetadata, setStockMetadata] = useState<StockMetadata | null>(null);
   const [ticker, setTicker] = useState<string>("NVDA");
-  const [chartData, setChartData] = useState<any[]>([]);
-  const [finData, setFinData] = useState<any[]>([]);
+  const [chartData, setChartData] = useState<ChartDataPoint[]>([]);
   const [isFetchingMaxData, setIsFetchingMaxData] = useState<boolean>(true);
-  // New: track whether we've finished 1Y data fetch
-  const [isFetchingOneYearData, setIsFetchingOneYearData] = useState<boolean>(true);
-  const [oneYearData, setOneYearData] = useState<any[]>([]);
   const [intervalEndDate, setIntervalEndDate] = useState<Date | null>(null);
   const [intervalStartDate, setIntervalStartDate] = useState<Date | null>(null);
   const [intervalError, setIntervalError] = useState<string>("");
-
-  // NEW: State for slider value. Default 100 means slider is all the way to the right.
   const [sliderValue, setSliderValue] = useState<number>(100);
-
-  // NEW: Add state and constant for event highlights shading mechanism
   const [eventRanges, setEventRanges] = useState<Array<{ start: string; end: string }>>([]);
   const [showEventHighlights, setShowEventHighlights] = useState<boolean>(false);
-  const [selectedEvent, setSelectedEvent] = useState<string | null>(null);
   const [hoveredEvent, setHoveredEvent] = useState<string | null>(null);
   const [popupPosition, setPopupPosition] = useState<{ x: number, y: number } | null>(null);
 
@@ -118,19 +133,13 @@ export default function Dashboard() {
       const data1y = await response1y.json();
       if (data1y.status_code === 200 && data1y.time_series) {
         setChartData(data1y.time_series);
-        setOneYearData(data1y.time_series);
-        if (data1y.fin_data) {
-          setFinData(data1y.fin_data);
-        }
-        // Allow the chart to display now that we have 1Y data
-        setIsFetchingOneYearData(false);
       }
       // 2) Fetch max data
       const responseMax = await fetch(`${apiUrl}/api/stockdata/?stockname=${tickerSymbol}&period=max&interval=1d`);
       const dataMax = await responseMax.json();
       if (dataMax.status_code === 200 && dataMax.time_series) {
         const combined = [...(data1y.time_series || []), ...dataMax.time_series];
-        const dedupedData = combined.reduce<any[]>((acc, cur) => {
+        const dedupedData = combined.reduce<ChartDataPoint[]>((acc, cur) => {
           if (!acc.some((item) => item.time === cur.time)) {
             acc.push(cur);
           }
@@ -169,13 +178,11 @@ export default function Dashboard() {
     setSliderValue(100);
     // Reset fetching state to true and clear interval dates
     setIsFetchingMaxData(true);
-    setIsFetchingOneYearData(true);
     setIntervalStartDate(null);
     setIntervalEndDate(null);
 
     // Clear event ranges and close the news panel when ticker changes
     setEventRanges([]);
-    setSelectedEvent(null);
     setNewsPanelActive(false);
 
     fetchTickerData(ticker);
@@ -243,13 +250,12 @@ export default function Dashboard() {
       setTicker(upperSearchValue);
       // Clear event ranges and close the news panel
       setEventRanges([]);
-      setSelectedEvent(null);
       setNewsPanelActive(false);
     }
   };
 
   // Add this helper function near your other utility functions
-  const calculatePriceTrend = (data: any[], startDate: string, endDate: string): "up" | "down" | "neutral" => {
+  const calculatePriceTrend = (data: ChartDataPoint[], startDate: string, endDate: string): "up" | "down" | "neutral" => {
     const periodData = data.filter(
       point => point.time >= startDate && point.time <= endDate
     );
@@ -263,15 +269,14 @@ export default function Dashboard() {
   };
 
   // Add this function to fetch unusual ranges
-  const fetchUnusualRanges = async () => {
+  const fetchUnusualRanges = useMemo(() => async () => {
     try {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
       // Clear all selection states when fetching new ranges
       setEventRanges([]);
-      setSelectedEvent(null);
-      setSelectedEventId(null);
       setHoveredEvent(null);
+      setSelectedEventId(null);
       // Don't clear news panel here - we want to keep showing previous news until new selection
 
       // Format data with proper date handling
@@ -322,14 +327,13 @@ export default function Dashboard() {
       setEventRanges([]);
       setShowEventHighlights(false);
     }
-  };
+  }, [displayChartData]);
 
   // 1) Add extra state:
   const [shouldAnalyzeEvents, setShouldAnalyzeEvents] = useState(false);
 
   // 2) Modify the button click:
   const handleEventAnalyzerClick = () => {
-    setSelectedEvent(null);
     setHoveredEvent(null);
 
     // Always set the flag, so if the user's data isn't ready yet,
@@ -344,14 +348,14 @@ export default function Dashboard() {
       fetchUnusualRanges();
       setShouldAnalyzeEvents(false);
     }
-  }, [shouldAnalyzeEvents, displayChartData]);
+  }, [shouldAnalyzeEvents, displayChartData, fetchUnusualRanges]);
 
   // Around line ~76, you have a "controlsDisabled" boolean.
   // You can reuse that or create a new "eventAnalyzerDisabled" condition:
   const eventAnalyzerDisabled = displayChartData.length === 0 || isFetchingMaxData;
 
   const [newsPanelActive, setNewsPanelActive] = useState<boolean>(false);
-  const [newsPanelDateRange, setNewsPanelDateRange] = useState<string>("");
+  const [_newsPanelDateRange, _setNewsPanelDateRange] = useState<string>("");
 
   // Add news-related state variables:
   const [newsDetails, setNewsDetails] = useState<NewsData | null>(null);
@@ -369,9 +373,16 @@ export default function Dashboard() {
   // Update the handleEventClick function
   const handleEventClick = (eventId: string) => {
     if (selectedEventId === eventId) {
-      // If the event is already selected, do nothing
-      return;
+        // If the event is already selected, do nothing
+        return;
     }
+
+    // Cancel any ongoing request first
+    if (activeRequest) {
+        activeRequest.abort();
+        setActiveRequest(null);
+    }
+
     const clickedEvent = eventHighlights.find(event => event.id === eventId);
     if (!clickedEvent) return;
 
@@ -384,38 +395,50 @@ export default function Dashboard() {
     setPopupPosition(null);
     setHoveredEvent(null);
 
+    // Create new AbortController for this request
+    const controller = new AbortController();
+    setActiveRequest(controller);
+
     // Fetch news data for the selected event
-    fetchNewsData(ticker, "max", "1d", clickedEvent.start, clickedEvent.end)
-      .then(fetchedNews => {
-        setNewsDetails(fetchedNews);
-        setIsNewsLoading(false);
-      })
-      .catch(err => {
-        console.error("Failed to fetch news data:", err);
-        setNewsDetails(null);
-        setIsNewsLoading(false);
-      });
+    fetchNewsData(
+        ticker, 
+        "max", 
+        "1d", 
+        clickedEvent.start, 
+        clickedEvent.end,
+        controller.signal
+    )
+        .then(fetchedNews => {
+            setNewsDetails(fetchedNews);
+            setIsNewsLoading(false);
+        })
+        .catch(err => {
+            // Don't update state if the request was aborted
+            if (err.name !== 'AbortError') {
+                console.error("Failed to fetch news data:", err);
+                setNewsDetails(null);
+                setIsNewsLoading(false);
+            }
+        })
+        .finally(() => {
+            // Clear the active request if it's the current one
+            setActiveRequest(prev => 
+                prev?.signal === controller.signal ? null : prev
+            );
+        });
   };
 
-  // Memoize mapped news items only if newsDetails.explanations is an array
-  const mappedNewsItems = useMemo(() => {
-    if (!newsDetails || !Array.isArray(newsDetails.explanations)) return [];
-    return newsDetails.explanations.map((title, index) => ({
-      title,
-      source: newsDetails.reasons?.[index] || "",
-      link: newsDetails.references?.[index] || "#"
-    }));
-  }, [newsDetails]);
+  // 2. Update the state definition with proper typing and prefix
+  const [_mappedNewsItems, _setMappedNewsItems] = useState<NewsItem[]>([]);
 
   // Add cleanup effect
   useEffect(() => {
-    return () => {
-      // Cleanup function: abort any pending request when component unmounts
-      if (activeRequest) {
+    if (activeRequest) {
+      return () => {
         activeRequest.abort();
-      }
-    };
-  }, []);
+      };
+    }
+  }, [activeRequest]);
 
   return (
     <div className="min-h-screen bg-background flex flex-col h-screen">
@@ -859,7 +882,6 @@ export default function Dashboard() {
                         // Clear all related states when closing the panel
                         setNewsPanelActive(false);
                         setSelectedEventId(null); // Clear selected event ID
-                        setSelectedEvent(null);
                         setClickedEvent(null);
                         setNewsDetails(null);
                         // If there's an active request, abort it
