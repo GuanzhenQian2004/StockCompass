@@ -111,6 +111,7 @@ def unusual_ranges_api(request):
             "status_code": 500,
             "error": str(e)
         }, status=500)
+    
 @api_view(["GET"])
 def stock_metadata_api(request):
     """
@@ -132,6 +133,9 @@ def stock_metadata_api(request):
     
     try:
         # Wrap the async function to run synchronously.
+
+        print("ready to get metadata")
+
         data = async_to_sync(get_stock_metadata_info)(ticker_symbol)
         response_data = {
             "status_code": 200,
