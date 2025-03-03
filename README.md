@@ -2,6 +2,10 @@
 
 StockCompass is an AI-enhanced financial literacy platform designed to help users understand the fundamental drivers behind stock price fluctuations. By leveraging Generative AI (GenAI), we analyze news sources, financial data, and historical stock movements to provide deeper insights into volatile market events.
 
+
+https://github.com/user-attachments/assets/234dfaf8-9a26-4d55-ae1a-25aea3560e51
+
+
 ---
 
 ## 📌 Key Capabilities
