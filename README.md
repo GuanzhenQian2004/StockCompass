@@ -4,6 +4,10 @@ StockCompass is an AI-enhanced financial literacy platform designed to help user
 
 ---
 
+https://github.com/user-attachments/assets/f1114548-7521-497e-b54c-b4f774163b50
+
+
+
 ## 📌 Key Capabilities
 
 - **AI-Powered News Analysis** – Understand why a stock moved by exploring related news and macroeconomic events.  
